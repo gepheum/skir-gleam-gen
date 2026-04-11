@@ -1,4 +1,4 @@
-import { type CodeGenerator, type Module, type RecordKey, type RecordLocation, convertCase } from "skir-internal";
+import { type CodeGenerator, type Module, convertCase } from "skir-internal";
 import { z } from "zod";
 
 const Config = z.strictObject({});
@@ -86,4 +86,4 @@ function modulePathToGleamPath(modulePath: string): string {
   );
 }
 
-export default new GleamCodeGenerator();
+export const GENERATOR = new GleamCodeGenerator();
