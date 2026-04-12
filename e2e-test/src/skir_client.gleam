@@ -17,6 +17,7 @@
 import gleam/dict.{type Dict}
 import gleam/option.{type Option, None, Some}
 import tempo
+import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
 // UnrecognizedFields
@@ -56,6 +57,23 @@ pub opaque type Serializer(a) {
   )
 }
 
+// Re-export TypeDescriptor and related types so callers can
+// import them from this module.
+pub type PrimitiveType =
+  type_descriptor.PrimitiveType
+
+pub type StructDescriptor =
+  type_descriptor.StructDescriptor
+
+pub type StructField =
+  type_descriptor.StructField
+
+pub type EnumDescriptor =
+  type_descriptor.EnumDescriptor
+
+pub type EnumVariant =
+  type_descriptor.EnumVariant
+
 /// Returns a stub serializer. The stub serializer returns empty/default values
 /// and is used in this example project where real serialization is not
 /// implemented.
@@ -66,7 +84,7 @@ pub fn stub_serializer() -> Serializer(a) {
     from_json: fn(_, _) { Error("stub serializer") },
     to_bytes: fn(_) { <<>> },
     from_bytes: fn(_, _) { Error("stub serializer") },
-    type_descriptor: StubTypeDescriptor,
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Bool),
   )
 }
 
@@ -85,10 +103,7 @@ pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
 
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
-pub fn from_json(
-  serializer: Serializer(a),
-  json: String,
-) -> Result(a, String) {
+pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
   serializer.from_json(json, False)
 }
 
@@ -196,9 +211,7 @@ pub fn optional_serializer(
 }
 
 /// Returns a serializer for List(a) values.
-pub fn list_serializer(
-  item_serializer: Serializer(a),
-) -> Serializer(List(a)) {
+pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
   let _ = item_serializer
   stub_serializer()
 }
@@ -271,33 +284,16 @@ pub type Method(request, response) {
 // TypeDescriptor (reflection)
 // =============================================================================
 
-/// Describes the runtime shape of a Skir type.
-pub type TypeDescriptor {
-  StubTypeDescriptor
-  StructDescriptor(fields: List(FieldDescriptor))
-  EnumDescriptor(variants: List(VariantDescriptor))
-}
-
-/// Describes a single field of a Skir struct.
-pub type FieldDescriptor {
-  FieldDescriptor(name: String, number: Int)
-}
-
-/// Describes a single variant of a Skir enum.
-pub type VariantDescriptor {
-  VariantDescriptor(name: String, number: Int)
-}
-
 /// Serializes a TypeDescriptor to a JSON string.
+/// The format is compatible with the Go and Rust skir client implementations.
 pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
-  let _ = td
-  "{}"
+  type_descriptor.type_descriptor_to_json(td)
 }
 
 /// Parses a TypeDescriptor from a JSON string.
+/// Accepts JSON produced by this module or by the Go/Rust skir client implementations.
 pub fn type_descriptor_from_json(json: String) -> Result(TypeDescriptor, String) {
-  let _ = json
-  Ok(StubTypeDescriptor)
+  type_descriptor.type_descriptor_from_json(json)
 }
 
 // =============================================================================
