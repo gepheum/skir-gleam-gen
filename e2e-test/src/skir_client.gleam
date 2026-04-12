@@ -19,6 +19,7 @@ import gleam/dict.{type Dict}
 import gleam/float
 import gleam/int
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import tempo
 import type_descriptor.{type TypeDescriptor}
 
@@ -257,19 +258,301 @@ pub fn bool_serializer() -> Serializer(Bool) {
   make_serializer(bool_adapter())
 }
 
+// -----------------------------------------------------------------------------
+// Binary encoding helpers shared by all integer adapters
+// -----------------------------------------------------------------------------
+
+// Encodes an i32 using the skir variable-length wire format.
+// 0..=231:        single byte (the value itself)
+// 232..=65535:    wire 232, then value as u16 LE
+// >= 65536:       wire 233, then value as u32 LE
+// -256..=-1:      wire 235, then (value + 256) as u8
+// -65536..=-257:  wire 236, then (value + 65536) as u16 LE
+// < -65536:       wire 237, then value as i32 LE (4 bytes)
+fn encode_i32(v: Int) -> BitArray {
+  case v {
+    _ if v >= 0 && v <= 231 -> <<v>>
+    _ if v >= 232 && v <= 65_535 -> <<232, v:size(16)-little>>
+    _ if v >= 65_536 -> <<233, v:size(32)-little>>
+    _ if v >= -256 && v < 0 -> {
+      let b = v + 256
+      <<235, b>>
+    }
+    _ if v >= -65_536 && v < -256 -> {
+      let u = v + 65_536
+      <<236, u:size(16)-little>>
+    }
+    _ -> {
+      let u = int.bitwise_and(v, 0xFFFF_FFFF)
+      <<237, u:size(32)-little>>
+    }
+  }
+}
+
+// Decodes a variable-length number from a BitArray.
+// Returns Ok(#(value, rest)) or Error(message).
+fn decode_number(bits: BitArray) -> Result(#(Int, BitArray), String) {
+  case bits {
+    <<wire, rest:bits>> ->
+      case wire {
+        _ if wire <= 231 -> Ok(#(wire, rest))
+        232 ->
+          case rest {
+            <<v:size(16)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input")
+          }
+        233 ->
+          case rest {
+            <<v:size(32)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input")
+          }
+        234 ->
+          case rest {
+            <<v:size(64)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input")
+          }
+        235 ->
+          case rest {
+            <<b, r:bits>> -> Ok(#(b - 256, r))
+            _ -> Error("unexpected end of input")
+          }
+        236 ->
+          case rest {
+            <<v:size(16)-little, r:bits>> -> Ok(#(v - 65_536, r))
+            _ -> Error("unexpected end of input")
+          }
+        237 ->
+          case rest {
+            <<v:size(32)-little-signed, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input")
+          }
+        238 | 239 ->
+          case rest {
+            <<v:size(64)-little-signed, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input")
+          }
+        _ -> Ok(#(0, rest))
+      }
+    _ -> Error("unexpected end of input")
+  }
+}
+
+// Parses a JSON string that should represent an integer.
+// Handles: integer literal ("42"), float literal ("3.9" → 3), else 0.
+fn int32_from_json_str(s: String) -> Int {
+  case int.parse(s) {
+    Ok(n) -> n
+    Error(_) ->
+      case float.parse(s) {
+        Ok(f) -> float.truncate(f)
+        Error(_) -> 0
+      }
+  }
+}
+
+fn int32_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
+  case json_str {
+    "null" -> Ok(0)
+    _ ->
+      case string.starts_with(json_str, "\"") {
+        True -> {
+          // JSON string: strip quotes then parse as float→int
+          let inner =
+            json_str
+            |> string.drop_start(1)
+            |> string.drop_end(1)
+          Ok(int32_from_json_str(inner))
+        }
+        False -> Ok(int32_from_json_str(json_str))
+      }
+  }
+}
+
+fn int32_adapter() -> TypeAdapter(Int) {
+  TypeAdapter(
+    to_dense_json: fn(v) { int.to_string(v) },
+    to_readable_json: fn(v) { int.to_string(v) },
+    from_json: int32_from_json,
+    encode: fn(v) { encode_i32(v) },
+    decode: fn(bits, _) {
+      case decode_number(bits) {
+        Ok(#(n, _)) -> Ok(n)
+        Error(e) -> Error(e)
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Int32),
+  )
+}
+
 /// Returns the serializer for Int (int32) values.
 pub fn int32_serializer() -> Serializer(Int) {
-  stub_serializer()
+  make_serializer(int32_adapter())
+}
+
+// -----------------------------------------------------------------------------
+// Int64 adapter
+// Max safe integer for JSON: 9_007_199_254_740_991 (2^53 - 1)
+// Values within [-MAX, MAX] → JSON number; outside → quoted string.
+// -----------------------------------------------------------------------------
+
+const max_safe_int64_json: Int = 9_007_199_254_740_991
+
+fn int64_to_json(v: Int) -> String {
+  case v >= -max_safe_int64_json && v <= max_safe_int64_json {
+    True -> int.to_string(v)
+    False -> "\"" <> int.to_string(v) <> "\""
+  }
+}
+
+fn int64_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
+  case json_str {
+    "null" -> Ok(0)
+    _ ->
+      case string.starts_with(json_str, "\"") {
+        True -> {
+          let inner =
+            json_str
+            |> string.drop_start(1)
+            |> string.drop_end(1)
+          case int.parse(inner) {
+            Ok(n) -> Ok(n)
+            Error(_) ->
+              case float.parse(inner) {
+                Ok(f) -> Ok(float.round(f))
+                Error(_) -> Ok(0)
+              }
+          }
+        }
+        False ->
+          case int.parse(json_str) {
+            Ok(n) -> Ok(n)
+            Error(_) ->
+              case float.parse(json_str) {
+                Ok(f) -> Ok(float.round(f))
+                Error(_) -> Ok(0)
+              }
+          }
+      }
+  }
+}
+
+// Encodes an i64.  Values in i32 range reuse i32 encoding; others use wire 238.
+fn encode_i64(v: Int) -> BitArray {
+  case v >= -2_147_483_648 && v <= 2_147_483_647 {
+    True -> encode_i32(v)
+    False -> {
+      let u = int.bitwise_and(v, 0xFFFF_FFFF_FFFF_FFFF)
+      <<238, u:size(64)-little>>
+    }
+  }
+}
+
+fn int64_adapter() -> TypeAdapter(Int) {
+  TypeAdapter(
+    to_dense_json: fn(v) { int64_to_json(v) },
+    to_readable_json: fn(v) { int64_to_json(v) },
+    from_json: int64_from_json,
+    encode: fn(v) { encode_i64(v) },
+    decode: fn(bits, _) {
+      case decode_number(bits) {
+        Ok(#(n, _)) -> Ok(n)
+        Error(e) -> Error(e)
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Int64),
+  )
 }
 
 /// Returns the serializer for Int (int64) values.
 pub fn int64_serializer() -> Serializer(Int) {
-  stub_serializer()
+  make_serializer(int64_adapter())
+}
+
+// -----------------------------------------------------------------------------
+// Hash64 adapter  (unsigned 64-bit integer, stored as Gleam Int)
+// Wire format: same variable-length uint scheme used by encode_uint32, extended
+// to u64: 0-231 single byte; 232-65535 wire232+u16LE; 65536-4294967295
+// wire233+u32LE; >= 2^32 wire234+u64LE.
+// -----------------------------------------------------------------------------
+
+const max_safe_hash64_json: Int = 9_007_199_254_740_991
+
+fn hash64_to_json(v: Int) -> String {
+  case v <= max_safe_hash64_json {
+    True -> int.to_string(v)
+    False -> "\"" <> int.to_string(v) <> "\""
+  }
+}
+
+fn hash64_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
+  case json_str {
+    "null" -> Ok(0)
+    _ ->
+      case string.starts_with(json_str, "\"") {
+        True -> {
+          let inner =
+            json_str
+            |> string.drop_start(1)
+            |> string.drop_end(1)
+          case int.parse(inner) {
+            Ok(n) -> Ok(n)
+            Error(_) ->
+              case float.parse(inner) {
+                Ok(f) -> Ok(float.round(f))
+                Error(_) -> Ok(0)
+              }
+          }
+        }
+        False ->
+          case float.parse(json_str) {
+            Ok(f) if f <. 0.0 -> Ok(0)
+            Ok(_) ->
+              case int.parse(json_str) {
+                Ok(n) -> Ok(n)
+                Error(_) ->
+                  case float.parse(json_str) {
+                    Ok(f) -> Ok(float.round(f))
+                    Error(_) -> Ok(0)
+                  }
+              }
+            Error(_) ->
+              case int.parse(json_str) {
+                Ok(n) -> Ok(n)
+                Error(_) -> Ok(0)
+              }
+          }
+      }
+  }
+}
+
+fn encode_uint64(v: Int) -> BitArray {
+  case v {
+    _ if v <= 231 -> <<v>>
+    _ if v <= 65_535 -> <<232, v:size(16)-little>>
+    _ if v <= 4_294_967_295 -> <<233, v:size(32)-little>>
+    _ -> <<234, v:size(64)-little>>
+  }
+}
+
+fn hash64_adapter() -> TypeAdapter(Int) {
+  TypeAdapter(
+    to_dense_json: fn(v) { hash64_to_json(v) },
+    to_readable_json: fn(v) { hash64_to_json(v) },
+    from_json: hash64_from_json,
+    encode: fn(v) { encode_uint64(v) },
+    decode: fn(bits, _) {
+      case decode_number(bits) {
+        Ok(#(n, _)) -> Ok(n)
+        Error(e) -> Error(e)
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Hash64),
+  )
 }
 
 /// Returns the serializer for Int (hash64) values.
 pub fn hash64_serializer() -> Serializer(Int) {
-  stub_serializer()
+  make_serializer(hash64_adapter())
 }
 
 /// Returns the serializer for Float (float32) values.
