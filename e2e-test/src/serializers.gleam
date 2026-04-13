@@ -1,7 +1,9 @@
+import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
+import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleam/string_tree
@@ -397,14 +399,380 @@ pub fn float64_serializer() -> Serializer(Float) {
   make_serializer(float64_adapter())
 }
 
+// ---------------------------------------------------------------------------
+// Base64 and hex helpers (used by bytes_adapter)
+// ---------------------------------------------------------------------------
+
+const base64_alphabet: String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+fn base64_char(i: Int) -> String {
+  string.slice(base64_alphabet, i, 1)
+}
+
+fn encode_base64(bs: BitArray) -> String {
+  encode_base64_acc(bs, string_tree.new()) |> string_tree.to_string
+}
+
+fn encode_base64_acc(bs: BitArray, acc) -> _ {
+  case bs {
+    <<>> -> acc
+    <<a:size(6), b:size(6), c:size(6), d:size(6), rest:bits>> ->
+      encode_base64_acc(
+        rest,
+        acc
+          |> string_tree.append(base64_char(a))
+          |> string_tree.append(base64_char(b))
+          |> string_tree.append(base64_char(c))
+          |> string_tree.append(base64_char(d)),
+      )
+    <<a:size(6), b:size(6), c:size(4)>> ->
+      acc
+      |> string_tree.append(base64_char(a))
+      |> string_tree.append(base64_char(b))
+      |> string_tree.append(base64_char(int.bitwise_shift_left(c, 2)))
+      |> string_tree.append("=")
+    <<a:size(6), b:size(2)>> ->
+      acc
+      |> string_tree.append(base64_char(a))
+      |> string_tree.append(base64_char(int.bitwise_shift_left(b, 4)))
+      |> string_tree.append("==")
+    _ -> acc
+  }
+}
+
+fn base64_char_to_int(c: Int) -> Result(Int, String) {
+  case c {
+    _ if c >= 65 && c <= 90 -> Ok(c - 65)
+    _ if c >= 97 && c <= 122 -> Ok(c - 71)
+    _ if c >= 48 && c <= 57 -> Ok(c + 4)
+    43 -> Ok(62)
+    47 -> Ok(63)
+    _ -> Error("invalid base64 character")
+  }
+}
+
+fn strip_base64_padding(s: String) -> String {
+  case string.ends_with(s, "==") {
+    True -> string.drop_end(s, 2)
+    False ->
+      case string.ends_with(s, "=") {
+        True -> string.drop_end(s, 1)
+        False -> s
+      }
+  }
+}
+
+fn decode_base64(s: String) -> Result(BitArray, String) {
+  do_decode_base64(
+    bit_array.from_string(strip_base64_padding(s)),
+    bytes_tree.new(),
+  )
+}
+
+fn do_decode_base64(chars: BitArray, acc) -> Result(BitArray, String) {
+  case chars {
+    <<>> -> Ok(bytes_tree.to_bit_array(acc))
+    <<a, b, c, d, rest:bits>> ->
+      case base64_char_to_int(a) {
+        Error(e) -> Error(e)
+        Ok(va) ->
+          case base64_char_to_int(b) {
+            Error(e) -> Error(e)
+            Ok(vb) ->
+              case base64_char_to_int(c) {
+                Error(e) -> Error(e)
+                Ok(vc) ->
+                  case base64_char_to_int(d) {
+                    Error(e) -> Error(e)
+                    Ok(vd) -> {
+                      let n =
+                        int.bitwise_or(
+                          int.bitwise_or(
+                            int.bitwise_or(
+                              int.bitwise_shift_left(va, 18),
+                              int.bitwise_shift_left(vb, 12),
+                            ),
+                            int.bitwise_shift_left(vc, 6),
+                          ),
+                          vd,
+                        )
+                      let b1 =
+                        int.bitwise_shift_right(n, 16)
+                        |> int.bitwise_and(0xFF)
+                      let b2 =
+                        int.bitwise_shift_right(n, 8)
+                        |> int.bitwise_and(0xFF)
+                      let b3 = int.bitwise_and(n, 0xFF)
+                      do_decode_base64(
+                        rest,
+                        bytes_tree.append(acc, <<b1, b2, b3>>),
+                      )
+                    }
+                  }
+              }
+          }
+      }
+    <<a, b, c>> ->
+      case base64_char_to_int(a) {
+        Error(e) -> Error(e)
+        Ok(va) ->
+          case base64_char_to_int(b) {
+            Error(e) -> Error(e)
+            Ok(vb) ->
+              case base64_char_to_int(c) {
+                Error(e) -> Error(e)
+                Ok(vc) -> {
+                  let n =
+                    int.bitwise_or(
+                      int.bitwise_or(
+                        int.bitwise_shift_left(va, 18),
+                        int.bitwise_shift_left(vb, 12),
+                      ),
+                      int.bitwise_shift_left(vc, 6),
+                    )
+                  let b1 =
+                    int.bitwise_shift_right(n, 16) |> int.bitwise_and(0xFF)
+                  let b2 =
+                    int.bitwise_shift_right(n, 8) |> int.bitwise_and(0xFF)
+                  Ok(
+                    bytes_tree.to_bit_array(bytes_tree.append(acc, <<b1, b2>>)),
+                  )
+                }
+              }
+          }
+      }
+    <<a, b>> ->
+      case base64_char_to_int(a) {
+        Error(e) -> Error(e)
+        Ok(va) ->
+          case base64_char_to_int(b) {
+            Error(e) -> Error(e)
+            Ok(vb) -> {
+              let n =
+                int.bitwise_or(
+                  int.bitwise_shift_left(va, 18),
+                  int.bitwise_shift_left(vb, 12),
+                )
+              let b1 = int.bitwise_shift_right(n, 16) |> int.bitwise_and(0xFF)
+              Ok(bytes_tree.to_bit_array(bytes_tree.append(acc, <<b1>>)))
+            }
+          }
+      }
+    _ -> Error("invalid base64 data")
+  }
+}
+
+fn encode_hex(bs: BitArray) -> String {
+  encode_hex_acc(bs, string_tree.new()) |> string_tree.to_string
+}
+
+fn encode_hex_acc(bs: BitArray, acc) -> _ {
+  case bs {
+    <<>> -> acc
+    <<b, rest:bits>> ->
+      encode_hex_acc(
+        rest,
+        acc
+          |> string_tree.append(hex_digit(b / 16))
+          |> string_tree.append(hex_digit(b % 16)),
+      )
+    _ -> acc
+  }
+}
+
+fn hex_digit(n: Int) -> String {
+  case n {
+    0 -> "0"
+    1 -> "1"
+    2 -> "2"
+    3 -> "3"
+    4 -> "4"
+    5 -> "5"
+    6 -> "6"
+    7 -> "7"
+    8 -> "8"
+    9 -> "9"
+    10 -> "a"
+    11 -> "b"
+    12 -> "c"
+    13 -> "d"
+    14 -> "e"
+    _ -> "f"
+  }
+}
+
+fn decode_hex(s: String) -> Result(BitArray, String) {
+  let n = string.length(s)
+  case n % 2 {
+    0 -> do_decode_hex(bit_array.from_string(s), bytes_tree.new())
+    _ -> Error("odd hex string length: " <> int.to_string(n))
+  }
+}
+
+fn do_decode_hex(bs: BitArray, acc) -> Result(BitArray, String) {
+  case bs {
+    <<>> -> Ok(bytes_tree.to_bit_array(acc))
+    <<hi, lo, rest:bits>> ->
+      case hex_char_to_int(hi) {
+        Error(e) -> Error(e)
+        Ok(h) ->
+          case hex_char_to_int(lo) {
+            Error(e) -> Error(e)
+            Ok(l) -> {
+              let byte = h * 16 + l
+              do_decode_hex(rest, bytes_tree.append(acc, <<byte>>))
+            }
+          }
+      }
+    _ -> Error("unexpected end of hex input")
+  }
+}
+
+fn hex_char_to_int(c: Int) -> Result(Int, String) {
+  case c {
+    _ if c >= 48 && c <= 57 -> Ok(c - 48)
+    _ if c >= 65 && c <= 70 -> Ok(c - 55)
+    _ if c >= 97 && c <= 102 -> Ok(c - 87)
+    _ -> Error("invalid hex character")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// String adapter
+// ---------------------------------------------------------------------------
+
+fn string_adapter() -> TypeAdapter(String) {
+  TypeAdapter(
+    append_json: fn(v, tree, _) {
+      string_tree.append(tree, json.to_string(json.string(v)))
+    },
+    json_decoder: decode.one_of(decode.string, [
+      decode.int |> decode.map(fn(_) { "" }),
+      decode.float |> decode.map(fn(_) { "" }),
+      decode.optional(decode.string)
+        |> decode.map(fn(opt) { option.unwrap(opt, "") }),
+    ]),
+    encode: fn(v, acc) {
+      case v {
+        "" -> bytes_tree.append(acc, <<242>>)
+        _ -> {
+          let bs = bit_array.from_string(v)
+          let len = bit_array.byte_size(bs)
+          acc
+          |> bytes_tree.append(<<243>>)
+          |> bytes_tree.append(encode_uint64(len))
+          |> bytes_tree.append(bs)
+        }
+      }
+    },
+    decode: fn(bits, _) {
+      case bits {
+        <<wire, rest:bits>> ->
+          case wire {
+            0 | 242 -> Ok(#("", rest))
+            _ ->
+              case decode_number(rest) {
+                Error(e) -> Error(e)
+                Ok(#(n, after_len)) ->
+                  case n {
+                    0 -> Ok(#("", after_len))
+                    _ ->
+                      case after_len {
+                        <<data:bytes-size(n), remaining:bits>> ->
+                          case bit_array.to_string(data) {
+                            Ok(s) -> Ok(#(s, remaining))
+                            Error(_) -> Error("invalid UTF-8 in string data")
+                          }
+                        _ -> Error("not enough data for string field")
+                      }
+                  }
+              }
+          }
+        _ -> Error("unexpected end of input")
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.StringType),
+  )
+}
+
 /// Returns the serializer for String values.
 pub fn string_serializer() -> Serializer(String) {
-  serializer.stub_serializer()
+  make_serializer(string_adapter())
+}
+
+// ---------------------------------------------------------------------------
+// Bytes adapter
+// ---------------------------------------------------------------------------
+
+fn bytes_adapter() -> TypeAdapter(BitArray) {
+  TypeAdapter(
+    append_json: fn(v, tree, eol_indent) {
+      let encoded = case eol_indent {
+        "" -> "\"" <> encode_base64(v) <> "\""
+        _ -> "\"hex:" <> encode_hex(v) <> "\""
+      }
+      string_tree.append(tree, encoded)
+    },
+    json_decoder: decode.one_of(
+      decode.string
+        |> decode.then(fn(s) {
+          let r = case string.starts_with(s, "hex:") {
+            True -> decode_hex(string.drop_start(s, 4))
+            False -> decode_base64(s)
+          }
+          case r {
+            Ok(bs) -> decode.success(bs)
+            Error(e) -> decode.failure(<<>>, e)
+          }
+        }),
+      [
+        decode.int |> decode.map(fn(_) { <<>> }),
+        decode.float |> decode.map(fn(_) { <<>> }),
+        decode.optional(decode.string) |> decode.map(fn(_) { <<>> }),
+      ],
+    ),
+    encode: fn(v, acc) {
+      case v {
+        <<>> -> bytes_tree.append(acc, <<244>>)
+        _ -> {
+          let len = bit_array.byte_size(v)
+          acc
+          |> bytes_tree.append(<<245>>)
+          |> bytes_tree.append(encode_uint64(len))
+          |> bytes_tree.append(v)
+        }
+      }
+    },
+    decode: fn(bits, _) {
+      case bits {
+        <<wire, rest:bits>> ->
+          case wire {
+            0 | 244 -> Ok(#(<<>>, rest))
+            _ ->
+              case decode_number(rest) {
+                Error(e) -> Error(e)
+                Ok(#(n, after_len)) ->
+                  case n {
+                    0 -> Ok(#(<<>>, after_len))
+                    _ ->
+                      case after_len {
+                        <<data:bytes-size(n), remaining:bits>> ->
+                          Ok(#(data, remaining))
+                        _ -> Error("not enough data for bytes field")
+                      }
+                  }
+              }
+          }
+        _ -> Error("unexpected end of input")
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Bytes),
+  )
 }
 
 /// Returns the serializer for BitArray (bytes) values.
 pub fn bytes_serializer() -> Serializer(BitArray) {
-  serializer.stub_serializer()
+  make_serializer(bytes_adapter())
 }
 
 // ---------------------------------------------------------------------------
