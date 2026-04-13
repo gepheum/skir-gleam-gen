@@ -7,7 +7,9 @@ import gleam/string
 import gleam/string_tree.{type StringTree}
 import gleam/time/calendar
 import gleam/time/timestamp.{type Timestamp}
-import serializer.{type Serializer, type TypeAdapter, get_adapter, make_serializer}
+import serializer.{
+  type Serializer, type TypeAdapter, get_adapter, make_serializer,
+}
 import type_descriptor
 
 // =============================================================================
