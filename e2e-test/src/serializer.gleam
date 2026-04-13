@@ -59,20 +59,6 @@ pub fn get_adapter(serializer: Serializer(a)) -> TypeAdapter(a) {
 // Core serialization API
 // =============================================================================
 
-/// Returns a stub serializer. The stub serializer returns empty/default values
-/// and is used in this example project where real serialization is not
-/// implemented.
-pub fn stub_serializer() -> Serializer(a) {
-  make_serializer(TypeAdapter(
-    append_json: fn(_, tree, _) { tree },
-    json_decoder: decode.dynamic
-      |> decode.then(fn(_) { decode.failure(todo, "stub serializer") }),
-    encode: fn(_, acc) { acc },
-    decode: fn(_, _) { Error("stub serializer") },
-    type_descriptor: type_descriptor.Primitive(type_descriptor.Bool),
-  ))
-}
-
 /// Serializes a value to dense (field-index-based) JSON.
 /// Dense JSON is safe for persistent storage: renaming a field does not break
 /// deserialization.

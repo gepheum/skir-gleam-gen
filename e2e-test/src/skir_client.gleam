@@ -100,11 +100,6 @@ pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
   serializer.make_serializer(adapter)
 }
 
-/// Returns a stub serializer.
-pub fn stub_serializer() -> Serializer(a) {
-  serializer.stub_serializer()
-}
-
 // =============================================================================
 // Core serialization API
 // =============================================================================
