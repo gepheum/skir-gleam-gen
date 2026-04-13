@@ -1,0 +1,176 @@
+import gleam/bit_array
+import gleam/bytes_tree.{type BytesTree}
+import gleam/dynamic/decode.{type Decoder}
+import gleam/json
+import gleam/string_tree.{type StringTree}
+import type_descriptor.{type TypeDescriptor}
+
+// =============================================================================
+// TypeAdapter
+// =============================================================================
+
+/// An internal adapter that provides the type-specific logic for serialization
+/// and deserialization. Used by `Serializer`.
+pub type TypeAdapter(a) {
+  TypeAdapter(
+    append_json: fn(a, StringTree, String) -> StringTree,
+    json_decoder: Decoder(a),
+    encode: fn(a, BytesTree) -> BytesTree,
+    decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
+    type_descriptor: TypeDescriptor,
+  )
+}
+
+/// Constructs a `TypeAdapter` for type `a`.
+/// Used internally by the Skir client library and by generated code.
+pub fn make_type_adapter(
+  append_json append_json: fn(a, StringTree, String) -> StringTree,
+  json_decoder json_decoder: Decoder(a),
+  encode encode: fn(a, BytesTree) -> BytesTree,
+  decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
+  type_descriptor type_descriptor: TypeDescriptor,
+) -> TypeAdapter(a) {
+  TypeAdapter(append_json:, json_decoder:, encode:, decode:, type_descriptor:)
+}
+
+// =============================================================================
+// Serializer
+// =============================================================================
+
+/// A value that can serialize and deserialize values of type `a` to/from JSON
+/// and binary formats.
+pub opaque type Serializer(a) {
+  Serializer(adapter: TypeAdapter(a))
+}
+
+/// Constructs a `Serializer` from a `TypeAdapter`.
+/// Used internally by the Skir client library and by generated code.
+pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
+  Serializer(adapter:)
+}
+
+/// Returns the `TypeAdapter` inside a `Serializer`.
+/// Used internally by composite serializers that delegate to an item serializer.
+pub fn get_adapter(serializer: Serializer(a)) -> TypeAdapter(a) {
+  serializer.adapter
+}
+
+// =============================================================================
+// Core serialization API
+// =============================================================================
+
+/// Returns a stub serializer. The stub serializer returns empty/default values
+/// and is used in this example project where real serialization is not
+/// implemented.
+pub fn stub_serializer() -> Serializer(a) {
+  make_serializer(TypeAdapter(
+    append_json: fn(_, tree, _) { tree },
+    json_decoder: decode.dynamic
+      |> decode.then(fn(_) { decode.failure(todo, "stub serializer") }),
+    encode: fn(_, acc) { acc },
+    decode: fn(_, _) { Error("stub serializer") },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Bool),
+  ))
+}
+
+/// Serializes a value to dense (field-index-based) JSON.
+/// Dense JSON is safe for persistent storage: renaming a field does not break
+/// deserialization.
+pub fn to_dense_json(serializer: Serializer(a), value: a) -> String {
+  serializer.adapter.append_json(value, string_tree.new(), "")
+  |> string_tree.to_string()
+}
+
+/// Serializes a value to readable (field-name-based, indented) JSON.
+/// Use this for debugging; prefer `to_dense_json` for storage.
+pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
+  serializer.adapter.append_json(value, string_tree.new(), "\n")
+  |> string_tree.to_string()
+}
+
+/// Deserializes a value from a JSON string. Accepts both dense and readable
+/// JSON. Unrecognized fields are dropped.
+pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
+  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+    Ok(v) -> Ok(v)
+    Error(e) -> Error(json_decode_error_to_string(e))
+  }
+}
+
+/// Deserializes a value from a JSON string.
+/// When `keep_unrecognized_values` is `True`, field data that this client
+/// does not recognise is preserved in `unrecognized_fields_` so that
+/// re-serializing the value does not silently discard forward-compatible
+/// fields.
+pub fn from_json_with_options(
+  serializer: Serializer(a),
+  json: String,
+  keep_unrecognized_values keep_unrecognized_values: Bool,
+) -> Result(a, String) {
+  let _ = keep_unrecognized_values
+  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+    Ok(v) -> Ok(v)
+    Error(e) -> Error(json_decode_error_to_string(e))
+  }
+}
+
+/// Serializes a value to a compact binary format.
+/// The binary format uses the `"skir"` magic prefix followed by the encoded
+/// payload produced by the adapter.
+pub fn to_bytes(serializer: Serializer(a), value: a) -> BitArray {
+  bytes_tree.from_string("skir")
+  |> serializer.adapter.encode(value, _)
+  |> bytes_tree.to_bit_array()
+}
+
+/// Deserializes a value from binary format. Unrecognized fields are dropped.
+pub fn from_bytes(
+  serializer: Serializer(a),
+  bytes: BitArray,
+) -> Result(a, String) {
+  from_bytes_with_options(serializer, bytes, False)
+}
+
+/// Deserializes a value from binary format.
+/// When `keep_unrecognized_values` is `True`, field data that this client
+/// does not recognise is preserved in `unrecognized_fields_`.
+pub fn from_bytes_with_options(
+  serializer: Serializer(a),
+  bytes: BitArray,
+  keep_unrecognized_values keep_unrecognized_values: Bool,
+) -> Result(a, String) {
+  case bytes {
+    <<115, 107, 105, 114, rest:bits>> ->
+      case serializer.adapter.decode(rest, keep_unrecognized_values) {
+        Ok(#(value, _)) -> Ok(value)
+        Error(e) -> Error(e)
+      }
+    _ ->
+      case bit_array.to_string(bytes) {
+        Ok(s) ->
+          case json.parse(from: s, using: serializer.adapter.json_decoder) {
+            Ok(v) -> Ok(v)
+            Error(e) -> Error(json_decode_error_to_string(e))
+          }
+        Error(_) -> Error("invalid bytes: not skir binary and not valid UTF-8")
+      }
+  }
+}
+
+/// Returns the TypeDescriptor for the type this serializer handles.
+pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
+  serializer.adapter.type_descriptor
+}
+
+// =============================================================================
+// Internal helpers
+// =============================================================================
+
+fn json_decode_error_to_string(e: json.DecodeError) -> String {
+  case e {
+    json.UnexpectedEndOfInput -> "unexpected end of JSON input"
+    json.UnexpectedByte(b) -> "unexpected byte in JSON: " <> b
+    json.UnexpectedSequence(s) -> "unexpected sequence in JSON: " <> s
+    json.UnableToDecode(_) -> "unable to decode JSON value"
+  }
+}

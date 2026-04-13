@@ -45,6 +45,15 @@ pub fn array_to_readable_json_nonempty_test() {
 // list_serializer — from_json
 // =============================================================================
 
+pub fn array_from_json_zero_is_empty_test() {
+  skir_client.from_json(
+    skir_client.list_serializer(skir_client.int32_serializer()),
+    "0",
+  )
+  |> should.be_ok
+  |> should.equal([])
+}
+
 pub fn array_from_json_empty_test() {
   skir_client.from_json(
     skir_client.list_serializer(skir_client.int32_serializer()),
