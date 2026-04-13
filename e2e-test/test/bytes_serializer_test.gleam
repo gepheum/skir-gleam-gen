@@ -30,10 +30,13 @@ pub fn to_dense_json_three_bytes_test() {
 
 pub fn to_dense_json_hello_test() {
   // "hello" in bytes → base64 "aGVsbG8="
-  skir_client.to_dense_json(
-    skir_client.bytes_serializer(),
-    <<104, 101, 108, 108, 111>>,
-  )
+  skir_client.to_dense_json(skir_client.bytes_serializer(), <<
+    104,
+    101,
+    108,
+    108,
+    111,
+  >>)
   |> should.equal("\"aGVsbG8=\"")
 }
 
@@ -54,10 +57,12 @@ pub fn to_readable_json_single_byte_test() {
 
 pub fn to_readable_json_multiple_bytes_test() {
   // <<0xde, 0xad, 0xbe, 0xef>> → "hex:deadbeef"
-  skir_client.to_readable_json(
-    skir_client.bytes_serializer(),
-    <<0xde, 0xad, 0xbe, 0xef>>,
-  )
+  skir_client.to_readable_json(skir_client.bytes_serializer(), <<
+    0xde,
+    0xad,
+    0xbe,
+    0xef,
+  >>)
   |> should.equal("\"hex:deadbeef\"")
 }
 
@@ -126,10 +131,13 @@ pub fn binary_encoding_empty_is_wire_244_test() {
 pub fn binary_encoding_hello_bytes_test() {
   // <<104,101,108,108,111>>, len=5
   // → skir + 245 + 5 + bytes
-  skir_client.to_bytes(
-    skir_client.bytes_serializer(),
-    <<104, 101, 108, 108, 111>>,
-  )
+  skir_client.to_bytes(skir_client.bytes_serializer(), <<
+    104,
+    101,
+    108,
+    108,
+    111,
+  >>)
   |> should.equal(<<115, 107, 105, 114, 245, 5, 104, 101, 108, 108, 111>>)
 }
 
