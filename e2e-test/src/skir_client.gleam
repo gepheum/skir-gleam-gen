@@ -711,18 +711,94 @@ pub fn timestamp_serializer() -> Serializer(Timestamp) {
 // Composite Serializers
 // =============================================================================
 
+fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
+  let item = item_serializer.adapter
+  TypeAdapter(
+    append_json: fn(v, tree, eol_indent) {
+      case v {
+        None -> string_tree.append(tree, "null")
+        Some(x) -> item.append_json(x, tree, eol_indent)
+      }
+    },
+    json_decoder: decode.optional(item.json_decoder),
+    encode: fn(v, acc) {
+      case v {
+        None -> bytes_tree.append(acc, <<0>>)
+        Some(x) -> item.encode(x, bytes_tree.append(acc, <<1>>))
+      }
+    },
+    decode: fn(bits, strict) {
+      case bits {
+        <<0, rest:bits>> -> Ok(#(None, rest))
+        <<1, rest:bits>> ->
+          case item.decode(rest, strict) {
+            Ok(#(x, remaining)) -> Ok(#(Some(x), remaining))
+            Error(e) -> Error(e)
+          }
+        _ -> Error("expected 0 or 1 byte for optional tag")
+      }
+    },
+    type_descriptor: type_descriptor.Optional(item.type_descriptor),
+  )
+}
+
 /// Returns a serializer for Option(a) values.
 pub fn optional_serializer(
   item_serializer: Serializer(a),
 ) -> Serializer(Option(a)) {
-  let _ = item_serializer
-  stub_serializer()
+  make_serializer(optional_adapter(item_serializer))
+}
+
+fn list_adapter(item_serializer: Serializer(a)) -> TypeAdapter(List(a)) {
+  let item = item_serializer.adapter
+  TypeAdapter(
+    append_json: fn(v, tree, eol_indent) {
+      case v {
+        [] -> string_tree.append(tree, "[]")
+        _ -> {
+          let #(child_indent, closing) = case eol_indent {
+            "" -> #("", "]")
+            _ -> #(eol_indent <> "  ", eol_indent <> "]")
+          }
+          let tree = string_tree.append(tree, "[")
+          let #(tree, _) =
+            list_fold(v, #(tree, True), fn(pair, item_val) {
+              let #(t, is_first) = pair
+              let t = case is_first {
+                True -> t
+                False -> string_tree.append(t, ",")
+              }
+              let t = string_tree.append(t, child_indent)
+              #(item.append_json(item_val, t, child_indent), False)
+            })
+          string_tree.append(tree, closing)
+        }
+      }
+    },
+    json_decoder: decode.list(item.json_decoder),
+    encode: fn(v, acc) {
+      let count = list_fold(v, 0, fn(n, _) { n + 1 })
+      let acc = bytes_tree.append(acc, encode_uint64(count))
+      list_fold(v, acc, fn(bytes_acc, item_val) {
+        item.encode(item_val, bytes_acc)
+      })
+    },
+    decode: fn(bits, strict) {
+      case decode_number(bits) {
+        Error(e) -> Error(e)
+        Ok(#(count, rest)) -> decode_list_items(item, count, rest, strict, [])
+      }
+    },
+    type_descriptor: type_descriptor.Array(
+      item_type: item.type_descriptor,
+      key_extractor: "",
+    ),
+  )
 }
 
 /// Returns a serializer for List(a) values.
 pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
-  let _ = item_serializer
-  stub_serializer()
+  make_serializer(list_adapter(item_serializer))
 }
 
 // =============================================================================
@@ -813,6 +889,28 @@ fn list_fold(list: List(a), acc: b, f: fn(b, a) -> b) -> b {
   case list {
     [] -> acc
     [first, ..rest] -> list_fold(rest, f(acc, first), f)
+  }
+}
+
+fn list_reverse(lst: List(a)) -> List(a) {
+  list_fold(lst, [], fn(acc, x) { [x, ..acc] })
+}
+
+fn decode_list_items(
+  item: TypeAdapter(a),
+  count: Int,
+  bits: BitArray,
+  strict: Bool,
+  acc: List(a),
+) -> Result(#(List(a), BitArray), String) {
+  case count {
+    0 -> Ok(#(list_reverse(acc), bits))
+    _ ->
+      case item.decode(bits, strict) {
+        Error(e) -> Error(e)
+        Ok(#(v, rest)) ->
+          decode_list_items(item, count - 1, rest, strict, [v, ..acc])
+      }
   }
 }
 
