@@ -15,12 +15,17 @@
 //// the correct API shape, not to implement the actual serialization logic.
 
 import gleam/bit_array
+import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
+import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import gleam/string_tree.{type StringTree}
 import tempo
+import tempo/datetime as dt
 import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
@@ -52,11 +57,10 @@ pub fn no_unrecognized_fields() -> UnrecognizedFields {
 /// and deserialization. Used by `Serializer`.
 pub opaque type TypeAdapter(a) {
   TypeAdapter(
-    to_dense_json: fn(a) -> String,
-    to_readable_json: fn(a) -> String,
-    from_json: fn(String, Bool) -> Result(a, String),
-    encode: fn(a) -> BitArray,
-    decode: fn(BitArray, Bool) -> Result(a, String),
+    append_json: fn(a, StringTree, String) -> StringTree,
+    json_decoder: Decoder(a),
+    encode: fn(a, BytesTree) -> BytesTree,
+    decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
     type_descriptor: TypeDescriptor,
   )
 }
@@ -64,21 +68,13 @@ pub opaque type TypeAdapter(a) {
 /// Constructs a `TypeAdapter` for type `a`.
 /// Used internally by the Skir client library and by generated code.
 pub fn make_type_adapter(
-  to_dense_json to_dense_json: fn(a) -> String,
-  to_readable_json to_readable_json: fn(a) -> String,
-  from_json from_json: fn(String, Bool) -> Result(a, String),
-  encode encode: fn(a) -> BitArray,
-  decode decode: fn(BitArray, Bool) -> Result(a, String),
+  append_json append_json: fn(a, StringTree, String) -> StringTree,
+  json_decoder json_decoder: Decoder(a),
+  encode encode: fn(a, BytesTree) -> BytesTree,
+  decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: TypeDescriptor,
 ) -> TypeAdapter(a) {
-  TypeAdapter(
-    to_dense_json:,
-    to_readable_json:,
-    from_json:,
-    encode:,
-    decode:,
-    type_descriptor:,
-  )
+  TypeAdapter(append_json:, json_decoder:, encode:, decode:, type_descriptor:)
 }
 
 // =============================================================================
@@ -119,10 +115,10 @@ pub type EnumVariant =
 /// implemented.
 pub fn stub_serializer() -> Serializer(a) {
   make_serializer(TypeAdapter(
-    to_dense_json: fn(_) { "[]" },
-    to_readable_json: fn(_) { "{}" },
-    from_json: fn(_, _) { Error("stub serializer") },
-    encode: fn(_) { <<>> },
+    append_json: fn(_, tree, _) { tree },
+    json_decoder: decode.dynamic
+      |> decode.then(fn(_) { decode.failure(todo, "stub serializer") }),
+    encode: fn(_, acc) { acc },
     decode: fn(_, _) { Error("stub serializer") },
     type_descriptor: type_descriptor.Primitive(type_descriptor.Bool),
   ))
@@ -132,19 +128,24 @@ pub fn stub_serializer() -> Serializer(a) {
 /// Dense JSON is safe for persistent storage: renaming a field does not break
 /// deserialization.
 pub fn to_dense_json(serializer: Serializer(a), value: a) -> String {
-  serializer.adapter.to_dense_json(value)
+  serializer.adapter.append_json(value, string_tree.new(), "")
+  |> string_tree.to_string()
 }
 
 /// Serializes a value to readable (field-name-based, indented) JSON.
 /// Use this for debugging; prefer `to_dense_json` for storage.
 pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
-  serializer.adapter.to_readable_json(value)
+  serializer.adapter.append_json(value, string_tree.new(), "\n")
+  |> string_tree.to_string()
 }
 
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  serializer.adapter.from_json(json, False)
+  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+    Ok(v) -> Ok(v)
+    Error(e) -> Error(json_decode_error_to_string(e))
+  }
 }
 
 /// Deserializes a value from a JSON string.
@@ -157,15 +158,20 @@ pub fn from_json_with_options(
   json: String,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  serializer.adapter.from_json(json, keep_unrecognized_values)
+  let _ = keep_unrecognized_values
+  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+    Ok(v) -> Ok(v)
+    Error(e) -> Error(json_decode_error_to_string(e))
+  }
 }
 
 /// Serializes a value to a compact binary format.
 /// The binary format uses the `"skir"` magic prefix followed by the encoded
 /// payload produced by the adapter.
 pub fn to_bytes(serializer: Serializer(a), value: a) -> BitArray {
-  let payload = serializer.adapter.encode(value)
-  bit_array.concat([<<"skir":utf8>>, payload])
+  bytes_tree.from_string("skir")
+  |> serializer.adapter.encode(value, _)
+  |> bytes_tree.to_bit_array()
 }
 
 /// Deserializes a value from binary format. Unrecognized fields are dropped.
@@ -186,10 +192,17 @@ pub fn from_bytes_with_options(
 ) -> Result(a, String) {
   case bytes {
     <<115, 107, 105, 114, rest:bits>> ->
-      serializer.adapter.decode(rest, keep_unrecognized_values)
+      case serializer.adapter.decode(rest, keep_unrecognized_values) {
+        Ok(#(value, _)) -> Ok(value)
+        Error(e) -> Error(e)
+      }
     _ ->
       case bit_array.to_string(bytes) {
-        Ok(s) -> serializer.adapter.from_json(s, keep_unrecognized_values)
+        Ok(s) ->
+          case json.parse(from: s, using: serializer.adapter.json_decoder) {
+            Ok(v) -> Ok(v)
+            Error(e) -> Error(json_decode_error_to_string(e))
+          }
         Error(_) -> Error("invalid bytes: not skir binary and not valid UTF-8")
       }
   }
@@ -204,48 +217,48 @@ pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
 // Primitive Serializers
 // =============================================================================
 
-fn bool_from_json(json_str: String, _keep: Bool) -> Result(Bool, String) {
-  case json_str {
-    "true" -> Ok(True)
-    "false" | "null" -> Ok(False)
-    _ ->
-      case int.parse(json_str) {
-        Ok(n) -> Ok(n != 0)
-        Error(_) ->
-          case float.parse(json_str) {
-            Ok(f) -> Ok(f != 0.0)
-            // JSON-encoded string: "0" (3 chars: quote zero quote) is false;
-            // any other value is true.
-            Error(_) -> Ok(json_str != "\"0\"")
-          }
-      }
+fn json_decode_error_to_string(e: json.DecodeError) -> String {
+  case e {
+    json.UnexpectedEndOfInput -> "unexpected end of JSON input"
+    json.UnexpectedByte(b) -> "unexpected byte in JSON: " <> b
+    json.UnexpectedSequence(s) -> "unexpected sequence in JSON: " <> s
+    json.UnableToDecode(_) -> "unable to decode JSON value"
   }
 }
 
 fn bool_adapter() -> TypeAdapter(Bool) {
   TypeAdapter(
-    to_dense_json: fn(v) {
-      case v {
-        True -> "1"
-        False -> "0"
+    append_json: fn(v, tree, eol_indent) {
+      let s = case eol_indent {
+        "" ->
+          case v {
+            True -> "1"
+            False -> "0"
+          }
+        _ ->
+          case v {
+            True -> "true"
+            False -> "false"
+          }
       }
+      string_tree.append(tree, s)
     },
-    to_readable_json: fn(v) {
-      case v {
-        True -> "true"
-        False -> "false"
-      }
-    },
-    from_json: bool_from_json,
-    encode: fn(v) {
-      case v {
+    json_decoder: decode.one_of(decode.bool, [
+      decode.int |> decode.map(fn(n) { n != 0 }),
+      decode.float |> decode.map(fn(f) { f != 0.0 }),
+      decode.string |> decode.map(fn(s) { s != "0" }),
+      decode.optional(decode.bool)
+        |> decode.map(fn(opt) { option.unwrap(opt, False) }),
+    ]),
+    encode: fn(v, acc) {
+      bytes_tree.append(acc, case v {
         True -> <<1>>
         False -> <<0>>
-      }
+      })
     },
     decode: fn(bits, _) {
       case bits {
-        <<b, _rest:bits>> -> Ok(b != 0)
+        <<b, rest:bits>> -> Ok(#(b != 0, rest))
         _ -> Error("expected at least 1 byte for bool")
       }
     },
@@ -350,36 +363,17 @@ fn int32_from_json_str(s: String) -> Int {
   }
 }
 
-fn int32_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
-  case json_str {
-    "null" -> Ok(0)
-    _ ->
-      case string.starts_with(json_str, "\"") {
-        True -> {
-          // JSON string: strip quotes then parse as float→int
-          let inner =
-            json_str
-            |> string.drop_start(1)
-            |> string.drop_end(1)
-          Ok(int32_from_json_str(inner))
-        }
-        False -> Ok(int32_from_json_str(json_str))
-      }
-  }
-}
-
 fn int32_adapter() -> TypeAdapter(Int) {
   TypeAdapter(
-    to_dense_json: fn(v) { int.to_string(v) },
-    to_readable_json: fn(v) { int.to_string(v) },
-    from_json: int32_from_json,
-    encode: fn(v) { encode_i32(v) },
-    decode: fn(bits, _) {
-      case decode_number(bits) {
-        Ok(#(n, _)) -> Ok(n)
-        Error(e) -> Error(e)
-      }
-    },
+    append_json: fn(v, tree, _) { string_tree.append(tree, int.to_string(v)) },
+    json_decoder: decode.one_of(decode.int, [
+      decode.float |> decode.map(float.truncate),
+      decode.string |> decode.map(int32_from_json_str),
+      decode.optional(decode.int)
+        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+    ]),
+    encode: fn(v, acc) { bytes_tree.append(acc, encode_i32(v)) },
+    decode: fn(bits, _) { decode_number(bits) },
     type_descriptor: type_descriptor.Primitive(type_descriptor.Int32),
   )
 }
@@ -404,36 +398,29 @@ fn int64_to_json(v: Int) -> String {
   }
 }
 
-fn int64_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
-  case json_str {
-    "null" -> Ok(0)
-    _ ->
-      case string.starts_with(json_str, "\"") {
-        True -> {
-          let inner =
-            json_str
-            |> string.drop_start(1)
-            |> string.drop_end(1)
-          case int.parse(inner) {
-            Ok(n) -> Ok(n)
-            Error(_) ->
-              case float.parse(inner) {
-                Ok(f) -> Ok(float.round(f))
-                Error(_) -> Ok(0)
-              }
-          }
+fn int64_adapter() -> TypeAdapter(Int) {
+  let parse_string = fn(s) {
+    case int.parse(s) {
+      Ok(n) -> n
+      Error(_) ->
+        case float.parse(s) {
+          Ok(f) -> float.round(f)
+          Error(_) -> 0
         }
-        False ->
-          case int.parse(json_str) {
-            Ok(n) -> Ok(n)
-            Error(_) ->
-              case float.parse(json_str) {
-                Ok(f) -> Ok(float.round(f))
-                Error(_) -> Ok(0)
-              }
-          }
-      }
+    }
   }
+  TypeAdapter(
+    append_json: fn(v, tree, _) { string_tree.append(tree, int64_to_json(v)) },
+    json_decoder: decode.one_of(decode.int, [
+      decode.float |> decode.map(float.round),
+      decode.string |> decode.map(parse_string),
+      decode.optional(decode.int)
+        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+    ]),
+    encode: fn(v, acc) { bytes_tree.append(acc, encode_i64(v)) },
+    decode: fn(bits, _) { decode_number(bits) },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Int64),
+  )
 }
 
 // Encodes an i64.  Values in i32 range reuse i32 encoding; others use wire 238.
@@ -445,22 +432,6 @@ fn encode_i64(v: Int) -> BitArray {
       <<238, u:size(64)-little>>
     }
   }
-}
-
-fn int64_adapter() -> TypeAdapter(Int) {
-  TypeAdapter(
-    to_dense_json: fn(v) { int64_to_json(v) },
-    to_readable_json: fn(v) { int64_to_json(v) },
-    from_json: int64_from_json,
-    encode: fn(v) { encode_i64(v) },
-    decode: fn(bits, _) {
-      case decode_number(bits) {
-        Ok(#(n, _)) -> Ok(n)
-        Error(e) -> Error(e)
-      }
-    },
-    type_descriptor: type_descriptor.Primitive(type_descriptor.Int64),
-  )
 }
 
 /// Returns the serializer for Int (int64) values.
@@ -484,45 +455,35 @@ fn hash64_to_json(v: Int) -> String {
   }
 }
 
-fn hash64_from_json(json_str: String, _keep: Bool) -> Result(Int, String) {
-  case json_str {
-    "null" -> Ok(0)
-    _ ->
-      case string.starts_with(json_str, "\"") {
-        True -> {
-          let inner =
-            json_str
-            |> string.drop_start(1)
-            |> string.drop_end(1)
-          case int.parse(inner) {
-            Ok(n) -> Ok(n)
-            Error(_) ->
-              case float.parse(inner) {
-                Ok(f) -> Ok(float.round(f))
-                Error(_) -> Ok(0)
-              }
-          }
+fn hash64_adapter() -> TypeAdapter(Int) {
+  let parse_string = fn(s) {
+    case int.parse(s) {
+      Ok(n) -> n
+      Error(_) ->
+        case float.parse(s) {
+          Ok(f) -> float.round(f)
+          Error(_) -> 0
         }
-        False ->
-          case float.parse(json_str) {
-            Ok(f) if f <. 0.0 -> Ok(0)
-            Ok(_) ->
-              case int.parse(json_str) {
-                Ok(n) -> Ok(n)
-                Error(_) ->
-                  case float.parse(json_str) {
-                    Ok(f) -> Ok(float.round(f))
-                    Error(_) -> Ok(0)
-                  }
-              }
-            Error(_) ->
-              case int.parse(json_str) {
-                Ok(n) -> Ok(n)
-                Error(_) -> Ok(0)
-              }
-          }
-      }
+    }
   }
+  TypeAdapter(
+    append_json: fn(v, tree, _) { string_tree.append(tree, hash64_to_json(v)) },
+    json_decoder: decode.one_of(decode.int, [
+      decode.float
+        |> decode.map(fn(f) {
+          case f <. 0.0 {
+            True -> 0
+            False -> float.round(f)
+          }
+        }),
+      decode.string |> decode.map(parse_string),
+      decode.optional(decode.int)
+        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+    ]),
+    encode: fn(v, acc) { bytes_tree.append(acc, encode_uint64(v)) },
+    decode: fn(bits, _) { decode_number(bits) },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Hash64),
+  )
 }
 
 fn encode_uint64(v: Int) -> BitArray {
@@ -534,35 +495,116 @@ fn encode_uint64(v: Int) -> BitArray {
   }
 }
 
-fn hash64_adapter() -> TypeAdapter(Int) {
-  TypeAdapter(
-    to_dense_json: fn(v) { hash64_to_json(v) },
-    to_readable_json: fn(v) { hash64_to_json(v) },
-    from_json: hash64_from_json,
-    encode: fn(v) { encode_uint64(v) },
-    decode: fn(bits, _) {
-      case decode_number(bits) {
-        Ok(#(n, _)) -> Ok(n)
-        Error(e) -> Error(e)
-      }
-    },
-    type_descriptor: type_descriptor.Primitive(type_descriptor.Hash64),
-  )
-}
-
 /// Returns the serializer for Int (hash64) values.
 pub fn hash64_serializer() -> Serializer(Int) {
   make_serializer(hash64_adapter())
 }
 
+// ---------------------------------------------------------------------------
+// Float helpers
+// ---------------------------------------------------------------------------
+
+// Converts a float to a JSON string, stripping the trailing ".0" that
+// Erlang's float formatter adds to whole-number floats (e.g. 1.0 → "1").
+fn float_to_json_str(f: Float) -> String {
+  let s = float.to_string(f)
+  case string.ends_with(s, ".0") {
+    True -> string.drop_end(s, 2)
+    False -> s
+  }
+}
+
+fn float_json_decoder() -> Decoder(Float) {
+  decode.one_of(decode.float, [
+    decode.int |> decode.map(int.to_float),
+    decode.string
+      |> decode.map(fn(s) {
+        case s {
+          "NaN" | "Infinity" | "-Infinity" -> 0.0
+          _ ->
+            case float.parse(s) {
+              Ok(f) -> f
+              Error(_) ->
+                case int.parse(s) {
+                  Ok(n) -> int.to_float(n)
+                  Error(_) -> 0.0
+                }
+            }
+        }
+      }),
+    decode.optional(decode.float)
+      |> decode.map(fn(opt) { option.unwrap(opt, 0.0) }),
+  ])
+}
+
+fn float32_adapter() -> TypeAdapter(Float) {
+  TypeAdapter(
+    append_json: fn(v, tree, _) {
+      string_tree.append(tree, float_to_json_str(v))
+    },
+    json_decoder: float_json_decoder(),
+    encode: fn(v, acc) {
+      bytes_tree.append(acc, case v {
+        0.0 -> <<0>>
+        _ -> <<240, v:float-size(32)-little>>
+      })
+    },
+    decode: fn(bits, _) {
+      case bits {
+        <<240, rest:bits>> ->
+          case rest {
+            <<v:float-size(32)-little, remaining:bits>> -> Ok(#(v, remaining))
+            _ -> Error("truncated float32 data")
+          }
+        _ ->
+          case decode_number(bits) {
+            Ok(#(n, rest)) -> Ok(#(int.to_float(n), rest))
+            Error(e) -> Error(e)
+          }
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Float32),
+  )
+}
+
 /// Returns the serializer for Float (float32) values.
 pub fn float32_serializer() -> Serializer(Float) {
-  stub_serializer()
+  make_serializer(float32_adapter())
+}
+
+fn float64_adapter() -> TypeAdapter(Float) {
+  TypeAdapter(
+    append_json: fn(v, tree, _) {
+      string_tree.append(tree, float_to_json_str(v))
+    },
+    json_decoder: float_json_decoder(),
+    encode: fn(v, acc) {
+      bytes_tree.append(acc, case v {
+        0.0 -> <<0>>
+        _ -> <<241, v:float-size(64)-little>>
+      })
+    },
+    decode: fn(bits, _) {
+      case bits {
+        <<241, rest:bits>> ->
+          case rest {
+            <<v:float-size(64)-little, remaining:bits>> -> Ok(#(v, remaining))
+            _ -> Error("truncated float64 data")
+          }
+        _ ->
+          case decode_number(bits) {
+            Ok(#(n, rest)) -> Ok(#(int.to_float(n), rest))
+            Error(e) -> Error(e)
+          }
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Float64),
+  )
 }
 
 /// Returns the serializer for Float (float64) values.
 pub fn float64_serializer() -> Serializer(Float) {
-  stub_serializer()
+  make_serializer(float64_adapter())
 }
 
 /// Returns the serializer for String values.
@@ -575,9 +617,84 @@ pub fn bytes_serializer() -> Serializer(BitArray) {
   stub_serializer()
 }
 
+// ---------------------------------------------------------------------------
+// Timestamp helpers
+// ---------------------------------------------------------------------------
+
+// Encodes unix milliseconds. Values in i32 range reuse i32 encoding;
+// others use wire 239 (decoded identically to wire 238, 64-bit signed LE).
+fn encode_timestamp(ms: Int) -> BitArray {
+  case ms >= -2_147_483_648 && ms <= 2_147_483_647 {
+    True -> encode_i32(ms)
+    False -> {
+      let u = int.bitwise_and(ms, 0xFFFF_FFFF_FFFF_FFFF)
+      <<239, u:size(64)-little>>
+    }
+  }
+}
+
+fn timestamp_adapter() -> TypeAdapter(tempo.DateTime) {
+  let parse_millis_string = fn(s) {
+    case int.parse(s) {
+      Ok(n) -> n
+      Error(_) ->
+        case float.parse(s) {
+          Ok(f) -> float.round(f)
+          Error(_) -> 0
+        }
+    }
+  }
+  TypeAdapter(
+    append_json: fn(v, tree, eol_indent) {
+      let ms = dt.to_unix_milli(v)
+      case eol_indent {
+        "" -> string_tree.append(tree, int.to_string(ms))
+        _ -> {
+          let child_indent = eol_indent <> "  "
+          let iso = dt.format(v, in: tempo.Custom("YYYY-MM-DDTHH:mm:ss.SSSz"))
+          tree
+          |> string_tree.append("{")
+          |> string_tree.append(child_indent)
+          |> string_tree.append("\"unix_millis\": ")
+          |> string_tree.append(int.to_string(ms))
+          |> string_tree.append(",")
+          |> string_tree.append(child_indent)
+          |> string_tree.append("\"formatted\": \"")
+          |> string_tree.append(iso)
+          |> string_tree.append("\"")
+          |> string_tree.append(eol_indent)
+          |> string_tree.append("}")
+        }
+      }
+    },
+    json_decoder: decode.one_of(decode.int |> decode.map(dt.from_unix_milli), [
+      decode.float
+        |> decode.map(fn(f) { dt.from_unix_milli(float.round(f)) }),
+      {
+        use unix_millis <- decode.field("unix_millis", decode.int)
+        decode.success(dt.from_unix_milli(unix_millis))
+      },
+      decode.string
+        |> decode.map(fn(s) { dt.from_unix_milli(parse_millis_string(s)) }),
+      decode.optional(decode.int)
+        |> decode.map(fn(opt) { dt.from_unix_milli(option.unwrap(opt, 0)) }),
+    ]),
+    encode: fn(v, acc) {
+      bytes_tree.append(acc, encode_timestamp(dt.to_unix_milli(v)))
+    },
+    decode: fn(bits, _) {
+      case decode_number(bits) {
+        Ok(#(ms, rest)) -> Ok(#(dt.from_unix_milli(ms), rest))
+        Error(e) -> Error(e)
+      }
+    },
+    type_descriptor: type_descriptor.Primitive(type_descriptor.Timestamp),
+  )
+}
+
 /// Returns the serializer for tempo.DateTime values.
 pub fn datetime_serializer() -> Serializer(tempo.DateTime) {
-  stub_serializer()
+  make_serializer(timestamp_adapter())
 }
 
 // =============================================================================
