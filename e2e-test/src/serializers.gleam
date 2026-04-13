@@ -1,14 +1,14 @@
-import gleam/bytes_tree.{type BytesTree}
+import gleam/bytes_tree
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import gleam/string_tree.{type StringTree}
+import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp.{type Timestamp}
 import serializer.{
-  type Serializer, type TypeAdapter, get_adapter, make_serializer,
+  TypeAdapter, type Serializer, type TypeAdapter, get_adapter, make_serializer,
 }
 import type_descriptor
 
@@ -399,12 +399,12 @@ pub fn float64_serializer() -> Serializer(Float) {
 
 /// Returns the serializer for String values.
 pub fn string_serializer() -> Serializer(String) {
-  stub_serializer()
+  serializer.stub_serializer()
 }
 
 /// Returns the serializer for BitArray (bytes) values.
 pub fn bytes_serializer() -> Serializer(BitArray) {
-  stub_serializer()
+  serializer.stub_serializer()
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +502,7 @@ pub fn timestamp_serializer() -> Serializer(Timestamp) {
 // =============================================================================
 
 fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
-  let item = item_serializer.adapter
+  let item = get_adapter(item_serializer)
   TypeAdapter(
     append_json: fn(v, tree, eol_indent) {
       case v {
@@ -540,7 +540,7 @@ pub fn optional_serializer(
 }
 
 fn list_adapter(item_serializer: Serializer(a)) -> TypeAdapter(List(a)) {
-  let item = item_serializer.adapter
+  let item = get_adapter(item_serializer)
   TypeAdapter(
     append_json: fn(v, tree, eol_indent) {
       case v {

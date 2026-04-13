@@ -20,18 +20,19 @@ import gleam/dynamic/decode.{type Decoder}
 import gleam/option.{type Option}
 import gleam/string_tree.{type StringTree}
 import gleam/time/timestamp.{type Timestamp}
+import serializer
 import serializers
 import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
-// Re-exported types from serializers
+// Re-exported types from serializer
 // =============================================================================
 
 pub type TypeAdapter(a) =
-  serializers.TypeAdapter(a)
+  serializer.TypeAdapter(a)
 
 pub type Serializer(a) =
-  serializers.Serializer(a)
+  serializer.Serializer(a)
 
 // =============================================================================
 // UnrecognizedFields
@@ -84,7 +85,7 @@ pub fn make_type_adapter(
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: TypeDescriptor,
 ) -> TypeAdapter(a) {
-  serializers.make_type_adapter(
+  serializer.make_type_adapter(
     append_json:,
     json_decoder:,
     encode:,
@@ -96,12 +97,12 @@ pub fn make_type_adapter(
 /// Constructs a `Serializer` from a `TypeAdapter`.
 /// Used internally by the Skir client library and by generated code.
 pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
-  serializers.make_serializer(adapter)
+  serializer.make_serializer(adapter)
 }
 
 /// Returns a stub serializer.
 pub fn stub_serializer() -> Serializer(a) {
-  serializers.stub_serializer()
+  serializer.stub_serializer()
 }
 
 // =============================================================================
@@ -110,17 +111,17 @@ pub fn stub_serializer() -> Serializer(a) {
 
 /// Serializes a value to dense (field-index-based) JSON.
 pub fn to_dense_json(serializer: Serializer(a), value: a) -> String {
-  serializers.to_dense_json(serializer, value)
+  serializer.to_dense_json(serializer, value)
 }
 
 /// Serializes a value to readable (field-name-based, indented) JSON.
 pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
-  serializers.to_readable_json(serializer, value)
+  serializer.to_readable_json(serializer, value)
 }
 
 /// Deserializes a value from a JSON string.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  serializers.from_json(serializer, json)
+  serializer.from_json(serializer, json)
 }
 
 /// Deserializes a value from a JSON string with options.
@@ -129,12 +130,12 @@ pub fn from_json_with_options(
   json: String,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  serializers.from_json_with_options(serializer, json, keep_unrecognized_values:)
+  serializer.from_json_with_options(serializer, json, keep_unrecognized_values:)
 }
 
 /// Serializes a value to a compact binary format.
 pub fn to_bytes(serializer: Serializer(a), value: a) -> BitArray {
-  serializers.to_bytes(serializer, value)
+  serializer.to_bytes(serializer, value)
 }
 
 /// Deserializes a value from binary format.
@@ -142,7 +143,7 @@ pub fn from_bytes(
   serializer: Serializer(a),
   bytes: BitArray,
 ) -> Result(a, String) {
-  serializers.from_bytes(serializer, bytes)
+  serializer.from_bytes(serializer, bytes)
 }
 
 /// Deserializes a value from binary format with options.
@@ -151,16 +152,12 @@ pub fn from_bytes_with_options(
   bytes: BitArray,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  serializers.from_bytes_with_options(
-    serializer,
-    bytes,
-    keep_unrecognized_values:,
-  )
+  serializer.from_bytes_with_options(serializer, bytes, keep_unrecognized_values:)
 }
 
 /// Returns the TypeDescriptor for the type this serializer handles.
 pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
-  serializers.type_descriptor(serializer)
+  serializer.type_descriptor(serializer)
 }
 
 // =============================================================================
