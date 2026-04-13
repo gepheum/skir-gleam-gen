@@ -152,7 +152,11 @@ pub fn from_bytes_with_options(
   bytes: BitArray,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  serializer.from_bytes_with_options(serializer, bytes, keep_unrecognized_values:)
+  serializer.from_bytes_with_options(
+    serializer,
+    bytes,
+    keep_unrecognized_values:,
+  )
 }
 
 /// Returns the TypeDescriptor for the type this serializer handles.
