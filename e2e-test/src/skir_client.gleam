@@ -24,8 +24,8 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleam/string_tree.{type StringTree}
-import tempo
-import tempo/datetime as dt
+import gleam/time/calendar
+import gleam/time/timestamp.{type Timestamp}
 import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
@@ -633,7 +633,17 @@ fn encode_timestamp(ms: Int) -> BitArray {
   }
 }
 
-fn timestamp_adapter() -> TypeAdapter(tempo.DateTime) {
+fn timestamp_adapter() -> TypeAdapter(Timestamp) {
+  let from_unix_milli = fn(ms: Int) -> Timestamp {
+    timestamp.from_unix_seconds_and_nanoseconds(
+      seconds: ms / 1000,
+      nanoseconds: ms % 1000 * 1_000_000,
+    )
+  }
+  let to_unix_milli = fn(ts: Timestamp) -> Int {
+    let #(s, ns) = timestamp.to_unix_seconds_and_nanoseconds(ts)
+    s * 1000 + ns / 1_000_000
+  }
   let parse_millis_string = fn(s) {
     case int.parse(s) {
       Ok(n) -> n
@@ -646,12 +656,12 @@ fn timestamp_adapter() -> TypeAdapter(tempo.DateTime) {
   }
   TypeAdapter(
     append_json: fn(v, tree, eol_indent) {
-      let ms = dt.to_unix_milli(v)
+      let ms = to_unix_milli(v)
       case eol_indent {
         "" -> string_tree.append(tree, int.to_string(ms))
         _ -> {
           let child_indent = eol_indent <> "  "
-          let iso = dt.format(v, in: tempo.Custom("YYYY-MM-DDTHH:mm:ss.SSSz"))
+          let iso = timestamp.to_rfc3339(v, calendar.utc_offset)
           tree
           |> string_tree.append("{")
           |> string_tree.append(child_indent)
@@ -667,24 +677,27 @@ fn timestamp_adapter() -> TypeAdapter(tempo.DateTime) {
         }
       }
     },
-    json_decoder: decode.one_of(decode.int |> decode.map(dt.from_unix_milli), [
-      decode.float
-        |> decode.map(fn(f) { dt.from_unix_milli(float.round(f)) }),
-      {
-        use unix_millis <- decode.field("unix_millis", decode.int)
-        decode.success(dt.from_unix_milli(unix_millis))
-      },
-      decode.string
-        |> decode.map(fn(s) { dt.from_unix_milli(parse_millis_string(s)) }),
-      decode.optional(decode.int)
-        |> decode.map(fn(opt) { dt.from_unix_milli(option.unwrap(opt, 0)) }),
-    ]),
+    json_decoder: decode.one_of(
+      decode.int |> decode.map(from_unix_milli),
+      [
+        decode.float
+          |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
+        {
+          use unix_millis <- decode.field("unix_millis", decode.int)
+          decode.success(from_unix_milli(unix_millis))
+        },
+        decode.string
+          |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
+        decode.optional(decode.int)
+          |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
+      ],
+    ),
     encode: fn(v, acc) {
-      bytes_tree.append(acc, encode_timestamp(dt.to_unix_milli(v)))
+      bytes_tree.append(acc, encode_timestamp(to_unix_milli(v)))
     },
     decode: fn(bits, _) {
       case decode_number(bits) {
-        Ok(#(ms, rest)) -> Ok(#(dt.from_unix_milli(ms), rest))
+        Ok(#(ms, rest)) -> Ok(#(from_unix_milli(ms), rest))
         Error(e) -> Error(e)
       }
     },
@@ -692,8 +705,8 @@ fn timestamp_adapter() -> TypeAdapter(tempo.DateTime) {
   )
 }
 
-/// Returns the serializer for tempo.DateTime values.
-pub fn datetime_serializer() -> Serializer(tempo.DateTime) {
+/// Returns the serializer for Timestamp values.
+pub fn timestamp_serializer() -> Serializer(Timestamp) {
   make_serializer(timestamp_adapter())
 }
 
