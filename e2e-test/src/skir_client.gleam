@@ -677,21 +677,18 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
         }
       }
     },
-    json_decoder: decode.one_of(
-      decode.int |> decode.map(from_unix_milli),
-      [
-        decode.float
-          |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
-        {
-          use unix_millis <- decode.field("unix_millis", decode.int)
-          decode.success(from_unix_milli(unix_millis))
-        },
-        decode.string
-          |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
-        decode.optional(decode.int)
-          |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
-      ],
-    ),
+    json_decoder: decode.one_of(decode.int |> decode.map(from_unix_milli), [
+      decode.float
+        |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
+      {
+        use unix_millis <- decode.field("unix_millis", decode.int)
+        decode.success(from_unix_milli(unix_millis))
+      },
+      decode.string
+        |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
+      decode.optional(decode.int)
+        |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
+    ]),
     encode: fn(v, acc) {
       bytes_tree.append(acc, encode_timestamp(to_unix_milli(v)))
     },
