@@ -933,9 +933,6 @@ fn list_adapter(item_serializer: Serializer(a)) -> TypeAdapter(List(a)) {
         }
       }
     },
-    // The JSON number 0 is treated as an empty array for forward-compatibility:
-    // a field whose type changes from a scalar to an array can still be read by
-    // old clients (which encoded the default/zero value) without error.
     json_decoder: decode.one_of(decode.list(item.json_decoder), [
       decode.int |> decode.map(fn(_) { [] }),
     ]),
