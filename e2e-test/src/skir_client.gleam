@@ -1,19 +1,3 @@
-////  ______                        _               _  _  _
-////  |  _  \                      | |             | |(_)| |
-////  | | | |  ___    _ __    ___  | |_    ___   __| | _ | |_
-////  | | | | / _ \  | '_ \  / _ \ | __|  / _ \ / _` || || __|
-////  | |/ / | (_) | | | | || (_) || |_  |  __/| (_| || || |_
-////  |___/   \___/  |_| |_| \___/  \__|  \___| \__,_||_| \__|
-////
-//// Stub implementation of the Skir Gleam client library.
-////
-//// This module provides the types and functions that the Skir code generator
-//// relies on at runtime. In a real project, this module would be provided by
-//// the `skir_gleam_client` package instead of being written by hand.
-////
-//// Methods return dummy values here; the purpose of this file is to define
-//// the correct API shape, not to implement the actual serialization logic.
-
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode.{type Decoder}
@@ -33,27 +17,6 @@ pub type TypeAdapter(a) =
 
 pub type Serializer(a) =
   serializer.Serializer(a)
-
-// =============================================================================
-// UnrecognizedFields
-// =============================================================================
-
-/// Holds field data encountered during deserialization that this client does
-/// not recognise. Generated structs store this value so that re-serialising
-/// them to JSON or bytes does not silently discard forward-compatible fields.
-///
-/// This is an implementation detail of the Skir runtime library. Set this
-/// field to `no_unrecognized_fields()` whenever you construct a struct
-/// manually; the runtime populates it automatically when deserialising.
-pub opaque type UnrecognizedFields {
-  UnrecognizedFields(data: List(#(Int, BitArray)))
-}
-
-/// Returns an empty `UnrecognizedFields` value.
-/// Use this when constructing a Skir-generated struct manually.
-pub fn no_unrecognized_fields() -> UnrecognizedFields {
-  UnrecognizedFields(data: [])
-}
 
 // Re-export TypeDescriptor and related types so callers can
 // import them from this module.
