@@ -907,7 +907,10 @@ pub fn optional_serializer(
   make_serializer(optional_adapter(item_serializer))
 }
 
-fn list_adapter(item_serializer: Serializer(a)) -> TypeAdapter(List(a)) {
+fn list_adapter(
+  item_serializer: Serializer(a),
+  key_extractor: String,
+) -> TypeAdapter(List(a)) {
   let item = get_adapter(item_serializer)
   TypeAdapter(
     append_json: fn(v, tree, eol_indent) {
@@ -951,14 +954,21 @@ fn list_adapter(item_serializer: Serializer(a)) -> TypeAdapter(List(a)) {
     },
     type_descriptor: type_descriptor.Array(
       item_type: item.type_descriptor,
-      key_extractor: "",
+      key_extractor: key_extractor,
     ),
   )
 }
 
 /// Returns a serializer for List(a) values.
 pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
-  make_serializer(list_adapter(item_serializer))
+  keyed_list_serializer(item_serializer, "")
+}
+
+pub fn keyed_list_serializer(
+  item_serializer: Serializer(a),
+  key_extractor: String,
+) -> Serializer(List(a)) {
+  make_serializer(list_adapter(item_serializer, key_extractor))
 }
 
 // =============================================================================
