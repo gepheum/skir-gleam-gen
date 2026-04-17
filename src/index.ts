@@ -174,10 +174,66 @@ function computeGroupsForModule(
   return groups;
 }
 
+/**
+ * Computes the set of record keys whose default value can be represented as a
+ * Gleam `const` (as opposed to a zero-arg `fn`). A record can use `const` iff:
+ *   - It is an enum (always defaults to `Unknown(option.None)`)
+ *   - It is a struct and none of its non-hard-recursive fields transitively
+ *     contain a `timestamp` primitive (which requires a function call to
+ *     construct its default value).
+ *
+ * Computed via an optimistic fixed-point: assume all records can use `const`,
+ * then propagate "cannot" for timestamp fields and for fields whose type
+ * cannot use `const`.
+ */
+function computeConstDefaultKeys(
+  recordMap: ReadonlyMap<RecordKey, RecordLocation>,
+): Set<RecordKey> {
+  const canUseConst = new Map<RecordKey, boolean>();
+  for (const key of recordMap.keys()) {
+    canUseConst.set(key, true);
+  }
+
+  const typeBlocksConst = (type: ResolvedType): boolean => {
+    switch (type.kind) {
+      case "primitive":
+        return type.primitive === "timestamp";
+      case "array":
+        return typeBlocksConst(type.item);
+      case "optional":
+        return typeBlocksConst(type.other);
+      case "record":
+        return canUseConst.get(type.key) === false;
+    }
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [key, rec] of recordMap) {
+      if (rec.record.recordType !== "struct") continue;
+      if (canUseConst.get(key) === false) continue;
+      for (const field of rec.record.fields) {
+        if (field.isRecursive === "hard") continue;
+        if (field.type && typeBlocksConst(field.type)) {
+          canUseConst.set(key, false);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return new Set(
+    [...canUseConst.entries()].filter(([, v]) => v).map(([k]) => k),
+  );
+}
+
 // Generates the code for one Gleam source file (one GroupInfo → one file).
 class GleamSourceFileGenerator {
   private code = "";
   private readonly typeSpeller: TypeSpeller;
+  private readonly constDefaultKeys: ReadonlySet<RecordKey>;
 
   constructor(
     private readonly group: GroupInfo,
@@ -201,10 +257,15 @@ class GleamSourceFileGenerator {
       return `${keyToGroup.get(key)!.alias}.${typeName}`;
     };
 
+    const constDefaultKeys = computeConstDefaultKeys(recordMap);
+    this.constDefaultKeys = constDefaultKeys;
+
     const defaultExprFor = (key: RecordKey): string => {
-      const fn = fnNameFor(key, "default");
-      if (group.keySet.has(key)) return `${fn}()`;
-      return `${keyToGroup.get(key)!.alias}.${fn}()`;
+      const name = fnNameFor(key, "default");
+      const isConst = constDefaultKeys.has(key);
+      if (group.keySet.has(key)) return isConst ? name : `${name}()`;
+      const alias = keyToGroup.get(key)!.alias;
+      return isConst ? `${alias}.${name}` : `${alias}.${name}()`;
     };
 
     const serializerExprFor = (key: RecordKey): string => {
@@ -395,12 +456,19 @@ class GleamSourceFileGenerator {
       this.push("}\n\n");
     }
 
-    // Default function.
+    // Default const or function.
+    const useConstDefault = this.constDefaultKeys.has(struct.record.key);
     this.push(
-      `/// Returns the default \`${typeName}\` with all fields set to their default values.\n`,
+      useConstDefault
+        ? `/// The default \`${typeName}\` with all fields set to their default values.\n`
+        : `/// Returns the default \`${typeName}\` with all fields set to their default values.\n`,
     );
-    this.push(`pub fn ${fnPrefix}default() -> ${typeName} {\n`);
-    this.push(`${typeName}(\n`);
+    if (useConstDefault) {
+      this.push(`pub const ${fnPrefix}default = ${typeName}(\n`);
+    } else {
+      this.push(`pub fn ${fnPrefix}default() -> ${typeName} {\n`);
+      this.push(`${typeName}(\n`);
+    }
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
@@ -411,8 +479,12 @@ class GleamSourceFileGenerator {
       }
     }
     this.push(`unrecognized: option.None,\n`);
-    this.push(")\n");
-    this.push("}\n\n");
+    if (useConstDefault) {
+      this.push(")\n\n");
+    } else {
+      this.push(")\n");
+      this.push("}\n\n");
+    }
 
     // Serializer stub.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
@@ -463,13 +535,11 @@ class GleamSourceFileGenerator {
     }
     this.push("}\n\n");
 
-    // Default function — an enum defaults to the Unknown variant.
+    // Default const — an enum defaults to the Unknown variant.
     this.push(
-      `/// Returns the default \`${typeName}\` (the unknown variant).\n`,
+      `/// The default \`${typeName}\` (the unknown variant).\n`,
     );
-    this.push(`pub fn ${fnPrefix}default() -> ${typeName} {\n`);
-    this.push(`${ctorPrefix}Unknown(option.None)\n`);
-    this.push("}\n\n");
+    this.push(`pub const ${fnPrefix}default = ${ctorPrefix}Unknown(option.None)\n\n`);
 
     // Serializer stub.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
