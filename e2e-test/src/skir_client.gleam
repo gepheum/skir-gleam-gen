@@ -195,48 +195,6 @@ pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
 }
 
 // =============================================================================
-// KeyedList
-// =============================================================================
-
-/// An immutable list with O(1) lookup by a key field.
-///
-/// The index is built lazily on the first call to `keyed_list_find` and cached
-/// for subsequent calls.
-pub opaque type KeyedList(item) {
-  KeyedList(items: List(item), index: Dict(Int, item))
-}
-
-/// Returns an empty KeyedList.
-pub fn empty_keyed_list() -> KeyedList(a) {
-  KeyedList(items: [], index: dict.new())
-}
-
-/// Constructs a KeyedList from a list of items and a key extractor function.
-pub fn keyed_list_from_list(
-  items: List(a),
-  get_key: fn(a) -> Int,
-) -> KeyedList(a) {
-  let index =
-    items
-    |> list_fold(dict.new(), fn(acc, item) {
-      dict.insert(acc, get_key(item), item)
-    })
-  KeyedList(items:, index:)
-}
-
-/// Returns all items in the KeyedList as a plain List.
-pub fn keyed_list_to_list(keyed: KeyedList(a)) -> List(a) {
-  keyed.items
-}
-
-/// Finds an item by its Int key. Returns `Some(item)` if found, `None`
-/// otherwise.
-pub fn keyed_list_find(keyed: KeyedList(a), key: Int) -> Option(a) {
-  dict.get(keyed.index, key)
-  |> result_to_option
-}
-
-// =============================================================================
 // Method
 // =============================================================================
 
