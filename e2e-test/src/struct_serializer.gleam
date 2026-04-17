@@ -23,7 +23,7 @@ pub type FieldAdapter(s) {
     decode_json: fn(dynamic.Dynamic, s) -> Result(s, String),
     encode: fn(s, bytes_tree.BytesTree) -> bytes_tree.BytesTree,
     decode: fn(BitArray, s, Bool) -> Result(#(s, BitArray), String),
-    type_descriptor: type_descriptor.TypeDescriptor,
+    type_descriptor: fn() -> type_descriptor.TypeDescriptor,
   )
 }
 
