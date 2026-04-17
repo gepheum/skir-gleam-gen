@@ -44,7 +44,7 @@ pub type EnumVariant =
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  json_decoder json_decoder: Decoder(a),
+  decode_json decode_json: Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: TypeDescriptor,
@@ -52,7 +52,7 @@ pub fn make_type_adapter(
   serializer.make_type_adapter(
     is_default:,
     append_json:,
-    json_decoder:,
+    decode_json:,
     encode:,
     decode:,
     type_descriptor:,

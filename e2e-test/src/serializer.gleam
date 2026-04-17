@@ -15,7 +15,7 @@ pub type TypeAdapter(a) {
   TypeAdapter(
     is_default: fn(a) -> Bool,
     append_json: fn(a, StringTree, String) -> StringTree,
-    json_decoder: Decoder(a),
+    decode_json: Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
     decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
     type_descriptor: TypeDescriptor,
@@ -27,7 +27,7 @@ pub type TypeAdapter(a) {
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  json_decoder json_decoder: Decoder(a),
+  decode_json decode_json: Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: TypeDescriptor,
@@ -35,7 +35,7 @@ pub fn make_type_adapter(
   TypeAdapter(
     is_default:,
     append_json:,
-    json_decoder:,
+    decode_json:,
     encode:,
     decode:,
     type_descriptor:,
@@ -91,7 +91,7 @@ pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+  case json.parse(from: json, using: serializer.adapter.decode_json) {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -108,7 +108,7 @@ pub fn from_json_with_options(
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
   let _ = keep_unrecognized_values
-  case json.parse(from: json, using: serializer.adapter.json_decoder) {
+  case json.parse(from: json, using: serializer.adapter.decode_json) {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -148,7 +148,7 @@ pub fn from_bytes_with_options(
     _ ->
       case bit_array.to_string(bytes) {
         Ok(s) ->
-          case json.parse(from: s, using: serializer.adapter.json_decoder) {
+          case json.parse(from: s, using: serializer.adapter.decode_json) {
             Ok(v) -> Ok(v)
             Error(e) -> Error(json_decode_error_to_string(e))
           }
