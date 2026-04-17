@@ -1,4 +1,6 @@
 // TODO: type descriptors cannot be recursive...
+// TODO: remove the list_at
+// TODO: optimize decode_struct, ...
 // TODO: fix all comments
 
 import {

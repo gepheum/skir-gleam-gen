@@ -47,7 +47,7 @@ pub fn make_type_adapter(
   decode_json decode_json: Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
-  type_descriptor type_descriptor: TypeDescriptor,
+  type_descriptor type_descriptor: fn() -> TypeDescriptor,
 ) -> TypeAdapter(a) {
   serializer.make_type_adapter(
     is_default:,

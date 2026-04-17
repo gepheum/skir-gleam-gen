@@ -18,7 +18,7 @@ pub type TypeAdapter(a) {
     decode_json: Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
     decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
-    type_descriptor: TypeDescriptor,
+    type_descriptor: fn() -> TypeDescriptor,
   )
 }
 
@@ -30,7 +30,7 @@ pub fn make_type_adapter(
   decode_json decode_json: Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
-  type_descriptor type_descriptor: TypeDescriptor,
+  type_descriptor type_descriptor: fn() -> TypeDescriptor,
 ) -> TypeAdapter(a) {
   TypeAdapter(
     is_default:,
@@ -159,7 +159,7 @@ pub fn from_bytes_with_options(
 
 /// Returns the TypeDescriptor for the type this serializer handles.
 pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
-  serializer.adapter.type_descriptor
+  serializer.adapter.type_descriptor()
 }
 
 // =============================================================================
