@@ -20,6 +20,7 @@ import type_descriptor
 
 fn bool_adapter() -> TypeAdapter(Bool) {
   TypeAdapter(
+    is_default: fn(v) { !v },
     append_json: fn(v, tree, eol_indent) {
       let s = case eol_indent {
         "" ->
@@ -157,6 +158,7 @@ fn int32_from_json_str(s: String) -> Int {
 
 fn int32_adapter() -> TypeAdapter(Int) {
   TypeAdapter(
+    is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, int.to_string(v)) },
     json_decoder: decode.one_of(decode.int, [
       decode.float |> decode.map(float.truncate),
@@ -202,6 +204,7 @@ fn int64_adapter() -> TypeAdapter(Int) {
     }
   }
   TypeAdapter(
+    is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, int64_to_json(v)) },
     json_decoder: decode.one_of(decode.int, [
       decode.float |> decode.map(float.round),
@@ -259,6 +262,7 @@ fn hash64_adapter() -> TypeAdapter(Int) {
     }
   }
   TypeAdapter(
+    is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, hash64_to_json(v)) },
     json_decoder: decode.one_of(decode.int, [
       decode.float
@@ -331,6 +335,7 @@ fn float_json_decoder() -> Decoder(Float) {
 
 fn float32_adapter() -> TypeAdapter(Float) {
   TypeAdapter(
+    is_default: fn(v) { v == 0.0 },
     append_json: fn(v, tree, _) {
       string_tree.append(tree, float_to_json_str(v))
     },
@@ -366,6 +371,7 @@ pub fn float32_serializer() -> Serializer(Float) {
 
 fn float64_adapter() -> TypeAdapter(Float) {
   TypeAdapter(
+    is_default: fn(v) { v == 0.0 },
     append_json: fn(v, tree, _) {
       string_tree.append(tree, float_to_json_str(v))
     },
@@ -643,6 +649,7 @@ fn hex_char_to_int(c: Int) -> Result(Int, String) {
 
 fn string_adapter() -> TypeAdapter(String) {
   TypeAdapter(
+    is_default: fn(v) { v == "" },
     append_json: fn(v, tree, _) {
       string_tree.append(tree, json.to_string(json.string(v)))
     },
@@ -706,6 +713,7 @@ pub fn string_serializer() -> Serializer(String) {
 
 fn bytes_adapter() -> TypeAdapter(BitArray) {
   TypeAdapter(
+    is_default: fn(v) { v == <<>> },
     append_json: fn(v, tree, eol_indent) {
       let encoded = case eol_indent {
         "" -> "\"" <> encode_base64(v) <> "\""
@@ -813,6 +821,7 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
     }
   }
   TypeAdapter(
+    is_default: fn(v) { to_unix_milli(v) == 0 },
     append_json: fn(v, tree, eol_indent) {
       let ms = to_unix_milli(v)
       case eol_indent {
@@ -872,6 +881,7 @@ pub fn timestamp_serializer() -> Serializer(Timestamp) {
 fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
   let item = get_adapter(item_serializer)
   TypeAdapter(
+    is_default: fn(v) { v == None },
     append_json: fn(v, tree, eol_indent) {
       case v {
         None -> string_tree.append(tree, "null")
@@ -913,6 +923,7 @@ fn list_adapter(
 ) -> TypeAdapter(List(a)) {
   let item = get_adapter(item_serializer)
   TypeAdapter(
+    is_default: fn(v) { v == [] },
     append_json: fn(v, tree, eol_indent) {
       case v {
         [] -> string_tree.append(tree, "[]")

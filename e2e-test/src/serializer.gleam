@@ -13,6 +13,7 @@ import type_descriptor.{type TypeDescriptor}
 /// and deserialization. Used by `Serializer`.
 pub type TypeAdapter(a) {
   TypeAdapter(
+    is_default: fn(a) -> Bool,
     append_json: fn(a, StringTree, String) -> StringTree,
     json_decoder: Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
@@ -24,13 +25,21 @@ pub type TypeAdapter(a) {
 /// Constructs a `TypeAdapter` for type `a`.
 /// Used internally by the Skir client library and by generated code.
 pub fn make_type_adapter(
+  is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
   json_decoder json_decoder: Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: TypeDescriptor,
 ) -> TypeAdapter(a) {
-  TypeAdapter(append_json:, json_decoder:, encode:, decode:, type_descriptor:)
+  TypeAdapter(
+    is_default:,
+    append_json:,
+    json_decoder:,
+    encode:,
+    decode:,
+    type_descriptor:,
+  )
 }
 
 // =============================================================================
@@ -53,6 +62,11 @@ pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
 /// Used internally by composite serializers that delegate to an item serializer.
 pub fn get_adapter(serializer: Serializer(a)) -> TypeAdapter(a) {
   serializer.adapter
+}
+
+/// Returns `True` if `value` is the default value for the type.
+pub fn is_default(serializer: Serializer(a), value: a) -> Bool {
+  serializer.adapter.is_default(value)
 }
 
 // =============================================================================

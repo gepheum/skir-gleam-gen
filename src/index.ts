@@ -1,3 +1,4 @@
+// TODO: type descriptors cannot be recursive...
 // TODO: fix all comments
 
 import {
@@ -536,10 +537,10 @@ class GleamSourceFileGenerator {
     this.push("}\n\n");
 
     // Default const — an enum defaults to the Unknown variant.
+    this.push(`/// The default \`${typeName}\` (the unknown variant).\n`);
     this.push(
-      `/// The default \`${typeName}\` (the unknown variant).\n`,
+      `pub const ${fnPrefix}default = ${ctorPrefix}Unknown(option.None)\n\n`,
     );
-    this.push(`pub const ${fnPrefix}default = ${ctorPrefix}Unknown(option.None)\n\n`);
 
     // Serializer stub.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
