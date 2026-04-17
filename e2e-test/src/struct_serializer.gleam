@@ -1,3 +1,4 @@
+import decode_utils
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dict
@@ -146,7 +147,7 @@ fn decode(
                             rest3,
                           )
                         False ->
-                          case skip_n_values(extra, rest3) {
+                          case decode_utils.skip_n_values(extra, rest3) {
                             Error(e) -> Error(e)
                             Ok(remaining) -> Ok(#(s2, remaining))
                           }
@@ -362,7 +363,7 @@ fn decode_slot_count(
   rest: BitArray,
 ) -> Result(#(Int, BitArray), String) {
   case wire {
-    250 -> decode_number(rest)
+    250 -> decode_utils.decode_number(rest)
     247 | 248 | 249 -> Ok(#(wire - 246, rest))
     _ -> Error("unexpected wire byte for struct: " <> int.to_string(wire))
   }
@@ -387,7 +388,7 @@ fn decode_slots(
               decode_slots(fields, new_s, i + 1, count, rest, keep_unrecognized)
           }
         None ->
-          case skip_value(bits) {
+          case decode_utils.skip_value(bits) {
             Error(e) -> Error(e)
             Ok(rest) ->
               decode_slots(fields, s, i + 1, count, rest, keep_unrecognized)
@@ -404,7 +405,7 @@ fn capture_unrecognized_bytes(
   rest3: BitArray,
 ) -> Result(#(s, BitArray), String) {
   let before_size = bit_array.byte_size(rest3)
-  case skip_n_values(extra, rest3) {
+  case decode_utils.skip_n_values(extra, rest3) {
     Error(e) -> Error(e)
     Ok(remaining) -> {
       let consumed = before_size - bit_array.byte_size(remaining)
@@ -423,111 +424,6 @@ fn capture_unrecognized_bytes(
         _ -> Ok(#(s, remaining))
       }
     }
-  }
-}
-
-fn decode_number(bits: BitArray) -> Result(#(Int, BitArray), String) {
-  case bits {
-    <<w, rest:bits>> ->
-      case w {
-        _ if w <= 231 -> Ok(#(w, rest))
-        232 ->
-          case rest {
-            <<v:size(16)-little, r:bits>> -> Ok(#(v, r))
-            _ -> Error("unexpected end of input")
-          }
-        233 ->
-          case rest {
-            <<v:size(32)-little, r:bits>> -> Ok(#(v, r))
-            _ -> Error("unexpected end of input")
-          }
-        234 ->
-          case rest {
-            <<v:size(64)-little, r:bits>> -> Ok(#(v, r))
-            _ -> Error("unexpected end of input")
-          }
-        235 ->
-          case rest {
-            <<b, r:bits>> -> Ok(#(b - 256, r))
-            _ -> Error("unexpected end of input")
-          }
-        236 ->
-          case rest {
-            <<v:size(16)-little, r:bits>> -> Ok(#(v - 65_536, r))
-            _ -> Error("unexpected end of input")
-          }
-        237 ->
-          case rest {
-            <<v:size(32)-little-signed, r:bits>> -> Ok(#(v, r))
-            _ -> Error("unexpected end of input")
-          }
-        238 | 239 ->
-          case rest {
-            <<v:size(64)-little-signed, r:bits>> -> Ok(#(v, r))
-            _ -> Error("unexpected end of input")
-          }
-        _ -> Ok(#(0, rest))
-      }
-    _ -> Error("unexpected end of input")
-  }
-}
-
-fn skip_value(bits: BitArray) -> Result(BitArray, String) {
-  case bits {
-    <<w, rest:bits>> ->
-      case w {
-        _ if w <= 231 -> Ok(rest)
-        232 | 236 ->
-          case rest {
-            <<_:size(16), r:bits>> -> Ok(r)
-            _ -> Error("unexpected end of input in skip_value")
-          }
-        233 | 237 | 240 ->
-          case rest {
-            <<_:size(32), r:bits>> -> Ok(r)
-            _ -> Error("unexpected end of input in skip_value")
-          }
-        234 | 238 | 239 | 241 ->
-          case rest {
-            <<_:size(64), r:bits>> -> Ok(r)
-            _ -> Error("unexpected end of input in skip_value")
-          }
-        235 ->
-          case rest {
-            <<_, r:bits>> -> Ok(r)
-            _ -> Error("unexpected end of input in skip_value")
-          }
-        242 | 244 | 246 -> Ok(rest)
-        243 | 245 ->
-          case decode_number(rest) {
-            Error(e) -> Error(e)
-            Ok(#(n, after_len)) ->
-              case after_len {
-                <<_:bytes-size(n), r:bits>> -> Ok(r)
-                _ -> Error("unexpected end of input in skip_value")
-              }
-          }
-        247 | 248 | 249 -> skip_n_values(w - 246, rest)
-        250 ->
-          case decode_number(rest) {
-            Error(e) -> Error(e)
-            Ok(#(n, after_n)) -> skip_n_values(n, after_n)
-          }
-        255 -> Ok(rest)
-        _ -> Ok(rest)
-      }
-    _ -> Error("unexpected end of input in skip_value")
-  }
-}
-
-fn skip_n_values(n: Int, bits: BitArray) -> Result(BitArray, String) {
-  case n {
-    0 -> Ok(bits)
-    _ ->
-      case skip_value(bits) {
-        Error(e) -> Error(e)
-        Ok(rest) -> skip_n_values(n - 1, rest)
-      }
   }
 }
 
