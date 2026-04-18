@@ -1,5 +1,4 @@
 import gleam/bytes_tree.{type BytesTree}
-import gleam/dict.{type Dict}
 import gleam/dynamic/decode.{type Decoder}
 import gleam/option.{type Option}
 import gleam/string_tree.{type StringTree}
@@ -232,22 +231,4 @@ pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
 /// Parses a TypeDescriptor from a JSON string.
 pub fn type_descriptor_from_json(json: String) -> Result(TypeDescriptor, String) {
   type_descriptor.type_descriptor_from_json(json)
-}
-
-// =============================================================================
-// Internal helpers
-// =============================================================================
-
-fn list_fold(list: List(a), acc: b, f: fn(b, a) -> b) -> b {
-  case list {
-    [] -> acc
-    [first, ..rest] -> list_fold(rest, f(acc, first), f)
-  }
-}
-
-fn result_to_option(result: Result(a, b)) -> Option(a) {
-  case result {
-    Ok(value) -> option.Some(value)
-    Error(_) -> option.None
-  }
 }

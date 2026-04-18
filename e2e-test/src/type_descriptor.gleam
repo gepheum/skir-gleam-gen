@@ -132,13 +132,6 @@ fn enum_record_id(e: EnumDescriptor) -> String {
   e.module_path <> ":" <> e.qualified_name
 }
 
-fn record_descriptor_id(rd: RecordDescriptor) -> String {
-  case rd {
-    StructRecord(s) -> struct_record_id(s)
-    EnumRecord(e) -> enum_record_id(e)
-  }
-}
-
 /// Serializes a TypeDescriptor to a pretty-printed JSON string.
 /// The format is compatible with the Go and Rust skir client implementations.
 pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
