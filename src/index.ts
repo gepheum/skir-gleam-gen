@@ -591,8 +591,12 @@ class GleamSourceFileGenerator {
     this.push(`],\n`);
     this.push(`default: ${structDefaultExpr},\n`);
     this.push(`get_unrecognized: fn(s) { s.unrecognized },\n`);
+    const setUnrecognizedBody =
+      struct.record.fields.length === 0
+        ? `${typeName}(unrecognized: u)`
+        : `${typeName}(..s, unrecognized: u)`;
     this.push(
-      `set_unrecognized: fn(s, u) { ${typeName}(..s, unrecognized: u) },\n`,
+      `set_unrecognized: fn(s, u) { ${setUnrecognizedBody} },\n`,
     );
     this.push(
       `removed_numbers: [${struct.record.removedNumbers.join(", ")}],\n`,

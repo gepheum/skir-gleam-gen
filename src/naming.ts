@@ -80,13 +80,14 @@ export function segmentToGleamImportPath(
 
 /**
  * Returns the Gleam import alias given a pre-computed module dir and file segment.
- * e.g. ("gepheum/skir_foo/bar", "foo__s") → "gepheum__skir_foo__bar__foo__s"
+ * Trailing underscore avoids name conflicts with user-defined types.
+ * e.g. ("gepheum/skir_foo/bar", "foo__s") → "gepheum__skir_foo__bar__foo__s_"
  */
 export function segmentToGleamAlias(
   moduleDir: string,
   segment: string,
 ): string {
-  return `${moduleDir.replace(/\//g, "__")}__${segment}`;
+  return `${moduleDir.replace(/\//g, "__")}__${segment}_`;
 }
 
 /**
