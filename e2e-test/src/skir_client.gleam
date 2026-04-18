@@ -199,6 +199,14 @@ pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
   serializers.list_serializer(item_serializer)
 }
 
+/// Returns a serializer for List(a) values where a key extractor is provided.
+pub fn keyed_list_serializer(
+  item_serializer: Serializer(a),
+  key_extractor: String,
+) -> Serializer(List(a)) {
+  serializers.keyed_list_serializer(item_serializer, key_extractor)
+}
+
 // =============================================================================
 // Method
 // =============================================================================

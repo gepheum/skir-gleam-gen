@@ -14,6 +14,11 @@ import serializer
 import type_descriptor
 import unrecognized
 
+pub type Recursivity {
+  Recursive
+  NotRecursive
+}
+
 pub type FieldSpec(s, f) {
   FieldSpec(
     name: String,
@@ -22,7 +27,7 @@ pub type FieldSpec(s, f) {
     get: fn(s) -> f,
     set: fn(s, f) -> s,
     serializer: fn() -> serializer.Serializer(f),
-    recursive: Bool,
+    recursive: Recursivity,
   )
 }
 
@@ -42,7 +47,7 @@ pub type FieldAdapter(s) {
 
 pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
   case spec.recursive {
-    False -> {
+    NotRecursive -> {
       let ta = spec.serializer().adapter
       FieldAdapter(
         name: spec.name,
@@ -70,7 +75,7 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
         type_descriptor: fn() { ta.type_descriptor() },
       )
     }
-    True ->
+    Recursive ->
       FieldAdapter(
         name: spec.name,
         number: spec.number,
