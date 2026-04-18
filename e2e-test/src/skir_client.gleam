@@ -49,7 +49,7 @@ pub type EnumVariant =
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  decode_json decode_json: Decoder(a),
+  decode_json decode_json: fn(Bool) -> Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: fn() -> TypeDescriptor,

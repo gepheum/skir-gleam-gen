@@ -15,10 +15,10 @@ pub type TypeAdapter(a) {
   TypeAdapter(
     is_default: fn(a) -> Bool,
     append_json: fn(a, StringTree, String) -> StringTree,
-    decode_json: Decoder(a),
-    /// Like `decode_json`, but preserves unrecognized fields/variants when
-    /// parsing structs/enums. For primitive types, identical to `decode_json`.
-    decode_json_keep: Decoder(a),
+    /// Returns a JSON decoder. When the `Bool` argument is `True`, the decoder
+    /// preserves unrecognized fields/variants (keep mode). When `False`, it
+    /// drops them. For primitive types the argument is ignored.
+    decode_json: fn(Bool) -> Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
     decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
     type_descriptor: fn() -> TypeDescriptor,
@@ -30,8 +30,7 @@ pub type TypeAdapter(a) {
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  decode_json decode_json: Decoder(a),
-  decode_json_keep decode_json_keep: Decoder(a),
+  decode_json decode_json: fn(Bool) -> Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
   type_descriptor type_descriptor: fn() -> TypeDescriptor,
@@ -40,7 +39,6 @@ pub fn make_type_adapter(
     is_default:,
     append_json:,
     decode_json:,
-    decode_json_keep:,
     encode:,
     decode:,
     type_descriptor:,
@@ -94,7 +92,7 @@ pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  case json.parse(from: json, using: serializer.adapter.decode_json) {
+  case json.parse(from: json, using: serializer.adapter.decode_json(False)) {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -110,11 +108,7 @@ pub fn from_json_with_options(
   json: String,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  let decoder = case keep_unrecognized_values {
-    True -> serializer.adapter.decode_json_keep
-    False -> serializer.adapter.decode_json
-  }
-  case json.parse(from: json, using: decoder) {
+  case json.parse(from: json, using: serializer.adapter.decode_json(keep_unrecognized_values)) {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -154,7 +148,7 @@ pub fn from_bytes_with_options(
     _ ->
       case bit_array.to_string(bytes) {
         Ok(s) ->
-          case json.parse(from: s, using: serializer.adapter.decode_json) {
+          case json.parse(from: s, using: serializer.adapter.decode_json(False)) {
             Ok(v) -> Ok(v)
             Error(e) -> Error(json_decode_error_to_string(e))
           }

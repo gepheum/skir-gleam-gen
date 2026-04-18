@@ -37,13 +37,15 @@ fn bool_adapter() -> TypeAdapter(Bool) {
       }
       string_tree.append(tree, s)
     },
-    decode_json: decode.one_of(decode.bool, [
-      decode.int |> decode.map(fn(n) { n != 0 }),
-      decode.float |> decode.map(fn(f) { f != 0.0 }),
-      decode.string |> decode.map(fn(s) { s != "0" }),
-      decode.optional(decode.bool)
-        |> decode.map(fn(opt) { option.unwrap(opt, False) }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.bool, [
+        decode.int |> decode.map(fn(n) { n != 0 }),
+        decode.float |> decode.map(fn(f) { f != 0.0 }),
+        decode.string |> decode.map(fn(s) { s != "0" }),
+        decode.optional(decode.bool)
+          |> decode.map(fn(opt) { option.unwrap(opt, False) }),
+      ])
+    },
     encode: fn(v, acc) {
       bytes_tree.append(acc, case v {
         True -> <<1>>
@@ -178,12 +180,14 @@ fn int32_adapter() -> TypeAdapter(Int) {
   TypeAdapter(
     is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, int.to_string(v)) },
-    decode_json: decode.one_of(decode.int, [
-      decode.float |> decode.map(float.truncate),
-      decode.string |> decode.map(int32_from_json_str),
-      decode.optional(decode.int)
-        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.int, [
+        decode.float |> decode.map(float.truncate),
+        decode.string |> decode.map(int32_from_json_str),
+        decode.optional(decode.int)
+          |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+      ])
+    },
     encode: fn(v, acc) { bytes_tree.append(acc, encode_i32(v)) },
     decode: fn(bits, _) { decode_number(bits) },
     type_descriptor: fn() {
@@ -229,12 +233,14 @@ fn int64_adapter() -> TypeAdapter(Int) {
   TypeAdapter(
     is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, int64_to_json(v)) },
-    decode_json: decode.one_of(decode.int, [
-      decode.float |> decode.map(float.round),
-      decode.string |> decode.map(parse_string),
-      decode.optional(decode.int)
-        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.int, [
+        decode.float |> decode.map(float.round),
+        decode.string |> decode.map(parse_string),
+        decode.optional(decode.int)
+          |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+      ])
+    },
     encode: fn(v, acc) { bytes_tree.append(acc, encode_i64(v)) },
     decode: fn(bits, _) { decode_number(bits) },
     type_descriptor: fn() {
@@ -292,18 +298,20 @@ fn hash64_adapter() -> TypeAdapter(Int) {
   TypeAdapter(
     is_default: fn(v) { v == 0 },
     append_json: fn(v, tree, _) { string_tree.append(tree, hash64_to_json(v)) },
-    decode_json: decode.one_of(decode.int, [
-      decode.float
-        |> decode.map(fn(f) {
-          case f <. 0.0 {
-            True -> 0
-            False -> float.round(f)
-          }
-        }),
-      decode.string |> decode.map(parse_string),
-      decode.optional(decode.int)
-        |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.int, [
+        decode.float
+          |> decode.map(fn(f) {
+            case f <. 0.0 {
+              True -> 0
+              False -> float.round(f)
+            }
+          }),
+        decode.string |> decode.map(parse_string),
+        decode.optional(decode.int)
+          |> decode.map(fn(opt) { option.unwrap(opt, 0) }),
+      ])
+    },
     encode: fn(v, acc) { bytes_tree.append(acc, encode_uint64(v)) },
     decode: fn(bits, _) { decode_number(bits) },
     type_descriptor: fn() {
@@ -384,7 +392,7 @@ fn float32_adapter() -> TypeAdapter(Float) {
     append_json: fn(v, tree, _) {
       string_tree.append(tree, float_to_json_str(v))
     },
-    decode_json: float_decode_json(),
+    decode_json: fn(_) { float_decode_json() },
     encode: fn(v, acc) {
       bytes_tree.append(acc, case v {
         0.0 -> <<0>>
@@ -431,7 +439,7 @@ fn float64_adapter() -> TypeAdapter(Float) {
     append_json: fn(v, tree, _) {
       string_tree.append(tree, float_to_json_str(v))
     },
-    decode_json: float_decode_json(),
+    decode_json: fn(_) { float_decode_json() },
     encode: fn(v, acc) {
       bytes_tree.append(acc, case v {
         0.0 -> <<0>>
@@ -720,12 +728,14 @@ fn string_adapter() -> TypeAdapter(String) {
     append_json: fn(v, tree, _) {
       string_tree.append(tree, json.to_string(json.string(v)))
     },
-    decode_json: decode.one_of(decode.string, [
-      decode.int |> decode.map(fn(_) { "" }),
-      decode.float |> decode.map(fn(_) { "" }),
-      decode.optional(decode.string)
-        |> decode.map(fn(opt) { option.unwrap(opt, "") }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.string, [
+        decode.int |> decode.map(fn(_) { "" }),
+        decode.float |> decode.map(fn(_) { "" }),
+        decode.optional(decode.string)
+          |> decode.map(fn(opt) { option.unwrap(opt, "") }),
+      ])
+    },
     encode: fn(v, acc) {
       case v {
         "" -> bytes_tree.append(acc, <<242>>)
@@ -793,24 +803,26 @@ fn bytes_adapter() -> TypeAdapter(BitArray) {
       }
       string_tree.append(tree, encoded)
     },
-    decode_json: decode.one_of(
-      decode.string
-        |> decode.then(fn(s) {
-          let r = case string.starts_with(s, "hex:") {
-            True -> decode_hex(string.drop_start(s, 4))
-            False -> decode_base64(s)
-          }
-          case r {
-            Ok(bs) -> decode.success(bs)
-            Error(e) -> decode.failure(<<>>, e)
-          }
-        }),
-      [
-        decode.int |> decode.map(fn(_) { <<>> }),
-        decode.float |> decode.map(fn(_) { <<>> }),
-        decode.optional(decode.string) |> decode.map(fn(_) { <<>> }),
-      ],
-    ),
+    decode_json: fn(_) {
+      decode.one_of(
+        decode.string
+          |> decode.then(fn(s) {
+            let r = case string.starts_with(s, "hex:") {
+              True -> decode_hex(string.drop_start(s, 4))
+              False -> decode_base64(s)
+            }
+            case r {
+              Ok(bs) -> decode.success(bs)
+              Error(e) -> decode.failure(<<>>, e)
+            }
+          }),
+        [
+          decode.int |> decode.map(fn(_) { <<>> }),
+          decode.float |> decode.map(fn(_) { <<>> }),
+          decode.optional(decode.string) |> decode.map(fn(_) { <<>> }),
+        ],
+      )
+    },
     encode: fn(v, acc) {
       case v {
         <<>> -> bytes_tree.append(acc, <<244>>)
@@ -921,18 +933,20 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
         }
       }
     },
-    decode_json: decode.one_of(decode.int |> decode.map(from_unix_milli), [
-      decode.float
-        |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
-      {
-        use unix_millis <- decode.field("unix_millis", decode.int)
-        decode.success(from_unix_milli(unix_millis))
-      },
-      decode.string
-        |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
-      decode.optional(decode.int)
-        |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
-    ]),
+    decode_json: fn(_) {
+      decode.one_of(decode.int |> decode.map(from_unix_milli), [
+        decode.float
+          |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
+        {
+          use unix_millis <- decode.field("unix_millis", decode.int)
+          decode.success(from_unix_milli(unix_millis))
+        },
+        decode.string
+          |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
+        decode.optional(decode.int)
+          |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
+      ])
+    },
     encode: fn(v, acc) {
       bytes_tree.append(acc, encode_timestamp(to_unix_milli(v)))
     },
@@ -970,7 +984,7 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
         Some(x) -> item.append_json(x, tree, eol_indent)
       }
     },
-    decode_json: decode.optional(item.decode_json),
+    decode_json: fn(keep) { decode.optional(item.decode_json(keep)) },
     encode: fn(v, acc) {
       case v {
         None -> bytes_tree.append(acc, <<255>>)
@@ -1036,9 +1050,11 @@ fn list_adapter(
         }
       }
     },
-    decode_json: decode.one_of(decode.list(item.decode_json), [
-      decode.int |> decode.map(fn(_) { [] }),
-    ]),
+    decode_json: fn(keep) {
+      decode.one_of(decode.list(item.decode_json(keep)), [
+        decode.int |> decode.map(fn(_) { [] }),
+      ])
+    },
     encode: fn(v, acc) {
       let count = list_fold(v, 0, fn(n, _) { n + 1 })
       let acc = bytes_tree.append(acc, encode_list_count(count))

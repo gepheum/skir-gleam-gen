@@ -62,7 +62,7 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
           ta.append_json(spec.get(s), tree, eol_indent)
         },
         decode_json: fn(d, s) {
-          case decode.run(d, ta.decode_json) {
+          case decode.run(d, ta.decode_json(False)) {
             Ok(f_val) -> Ok(spec.set(s, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
@@ -89,7 +89,7 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
           spec.serializer().adapter.append_json(spec.get(s), tree, eol_indent)
         },
         decode_json: fn(d, s) {
-          case decode.run(d, spec.serializer().adapter.decode_json) {
+          case decode.run(d, spec.serializer().adapter.decode_json(False)) {
             Ok(f_val) -> Ok(spec.set(s, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
@@ -143,35 +143,38 @@ pub fn new_serializer(
           eol_indent,
         )
       },
-      decode_json: decode.dynamic
+      decode_json: fn(keep) {
+        decode.dynamic
         |> decode.then(fn(d) {
-          case
-            struct_decode_json(
-              ordered_fields,
-              recognized_slot_count,
-              d,
-              default,
-            )
-          {
-            Ok(s) -> decode.success(s)
-            Error(msg) -> decode.failure(default, msg)
+          case keep {
+            False ->
+              case
+                struct_decode_json(
+                  ordered_fields,
+                  recognized_slot_count,
+                  d,
+                  default,
+                )
+              {
+                Ok(s) -> decode.success(s)
+                Error(msg) -> decode.failure(default, msg)
+              }
+            True ->
+              case
+                struct_decode_json_keep(
+                  ordered_fields,
+                  set_unrecognized,
+                  recognized_slot_count,
+                  d,
+                  default,
+                )
+              {
+                Ok(s) -> decode.success(s)
+                Error(msg) -> decode.failure(default, msg)
+              }
           }
-        }),
-      decode_json_keep: decode.dynamic
-        |> decode.then(fn(d) {
-          case
-            struct_decode_json_keep(
-              ordered_fields,
-              set_unrecognized,
-              recognized_slot_count,
-              d,
-              default,
-            )
-          {
-            Ok(s) -> decode.success(s)
-            Error(msg) -> decode.failure(default, msg)
-          }
-        }),
+        })
+      },
       encode: fn(s, tree) {
         struct_encode(
           ordered_fields,
@@ -565,13 +568,7 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
         Ok(False) -> "false"
         _ ->
           case decode.run(d, decode.float) {
-            Ok(f) ->
-              case
-                float.loosely_equals(float.round(f) |> int.to_float, f, 0.0)
-              {
-                True -> int.to_string(float.round(f))
-                False -> float.to_string(f)
-              }
+            Ok(f) -> float.to_string(f)
             _ ->
               case decode.run(d, decode.string) {
                 Ok(s) -> json.to_string(json.string(s))

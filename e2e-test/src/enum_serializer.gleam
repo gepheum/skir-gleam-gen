@@ -133,7 +133,7 @@ pub fn wrapper_variant(
     },
     wrap_from_json: fn(d) {
       let ta = serializer_fn().adapter
-      case decode.run(d, ta.decode_json) {
+      case decode.run(d, ta.decode_json(False)) {
         Ok(v) -> Ok(wrap(v))
         Error([decode.DecodeError(expected:, found:, ..), ..]) ->
           Error("expected " <> expected <> " but found " <> found)
@@ -228,7 +228,8 @@ pub fn new_serializer(
           eol_indent,
         )
       },
-      decode_json: decode.dynamic
+      decode_json: fn(keep) {
+        decode.dynamic
         |> decode.then(fn(d) {
           case
             enum_decode_json(
@@ -238,30 +239,14 @@ pub fn new_serializer(
               unknown_default,
               wrap_unrecognized,
               d,
-              False,
+              keep,
             )
           {
             Ok(e) -> decode.success(e)
             Error(msg) -> decode.failure(unknown_default, msg)
           }
-        }),
-      decode_json_keep: decode.dynamic
-        |> decode.then(fn(d) {
-          case
-            enum_decode_json(
-              variants_by_number,
-              variants_by_name,
-              removed_numbers,
-              unknown_default,
-              wrap_unrecognized,
-              d,
-              True,
-            )
-          {
-            Ok(e) -> decode.success(e)
-            Error(msg) -> decode.failure(unknown_default, msg)
-          }
-        }),
+        })
+      },
       encode: fn(e, tree) {
         enum_encode(variants, get_kind_ordinal, get_unrecognized, e, tree)
       },
