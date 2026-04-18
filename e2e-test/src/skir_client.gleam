@@ -23,6 +23,12 @@ pub type Serializer(a) =
 pub type PrimitiveType =
   type_descriptor.PrimitiveType
 
+pub type TypeSignature =
+  type_descriptor.TypeSignature
+
+pub type RecordDescriptor =
+  type_descriptor.RecordDescriptor
+
 pub type StructDescriptor =
   type_descriptor.StructDescriptor
 

@@ -1,5 +1,6 @@
 import gleam/bit_array
 import gleam/bytes_tree
+import gleam/dict
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
@@ -55,7 +56,12 @@ fn bool_adapter() -> TypeAdapter(Bool) {
         _ -> Error("expected at least 1 byte for bool")
       }
     },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Bool) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Bool),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -168,7 +174,12 @@ fn int32_adapter() -> TypeAdapter(Int) {
     ]),
     encode: fn(v, acc) { bytes_tree.append(acc, encode_i32(v)) },
     decode: fn(bits, _) { decode_number(bits) },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Int32) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Int32),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -214,7 +225,12 @@ fn int64_adapter() -> TypeAdapter(Int) {
     ]),
     encode: fn(v, acc) { bytes_tree.append(acc, encode_i64(v)) },
     decode: fn(bits, _) { decode_number(bits) },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Int64) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Int64),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -278,7 +294,12 @@ fn hash64_adapter() -> TypeAdapter(Int) {
     ]),
     encode: fn(v, acc) { bytes_tree.append(acc, encode_uint64(v)) },
     decode: fn(bits, _) { decode_number(bits) },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Hash64) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Hash64),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -360,7 +381,12 @@ fn float32_adapter() -> TypeAdapter(Float) {
           }
       }
     },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Float32) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Float32),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -396,7 +422,12 @@ fn float64_adapter() -> TypeAdapter(Float) {
           }
       }
     },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Float64) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Float64),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -699,7 +730,10 @@ fn string_adapter() -> TypeAdapter(String) {
       }
     },
     type_descriptor: fn() {
-      type_descriptor.Primitive(type_descriptor.StringType)
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.StringType),
+        records: dict.new(),
+      )
     },
   )
 }
@@ -776,7 +810,12 @@ fn bytes_adapter() -> TypeAdapter(BitArray) {
         _ -> Error("unexpected end of input")
       }
     },
-    type_descriptor: fn() { type_descriptor.Primitive(type_descriptor.Bytes) },
+    type_descriptor: fn() {
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Bytes),
+        records: dict.new(),
+      )
+    },
   )
 }
 
@@ -868,7 +907,10 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
       }
     },
     type_descriptor: fn() {
-      type_descriptor.Primitive(type_descriptor.Timestamp)
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Primitive(type_descriptor.Timestamp),
+        records: dict.new(),
+      )
     },
   )
 }
@@ -910,7 +952,13 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
         _ -> Error("expected 0 or 1 byte for optional tag")
       }
     },
-    type_descriptor: fn() { type_descriptor.Optional(item.type_descriptor()) },
+    type_descriptor: fn() {
+      let item_td = item.type_descriptor()
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Optional(item_td.type_sig),
+        records: item_td.records,
+      )
+    },
   )
 }
 
@@ -968,9 +1016,13 @@ fn list_adapter(
       }
     },
     type_descriptor: fn() {
-      type_descriptor.Array(
-        item_type: item.type_descriptor(),
-        key_extractor: key_extractor,
+      let item_td = item.type_descriptor()
+      type_descriptor.TypeDescriptor(
+        type_sig: type_descriptor.Array(
+          item_type: item_td.type_sig,
+          key_extractor: key_extractor,
+        ),
+        records: item_td.records,
       )
     },
   )

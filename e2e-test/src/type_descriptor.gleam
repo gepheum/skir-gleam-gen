@@ -50,15 +50,38 @@ fn primitive_type_from_str(s: String) -> Result(PrimitiveType, String) {
 }
 
 // =============================================================================
+// TypeSignature
+// =============================================================================
+
+/// The shape of a Skir type. Records (structs and enums) are represented
+/// as a `Record(id)` where `id` is the record's fully-qualified ID string
+/// `"<module_path>:<qualified_name>"`. The actual record definitions live in
+/// the `TypeDescriptor.records` map.
+pub type TypeSignature {
+  Primitive(PrimitiveType)
+  Optional(TypeSignature)
+  Array(item_type: TypeSignature, key_extractor: String)
+  Record(String)
+}
+
+// =============================================================================
 // TypeDescriptor
 // =============================================================================
 
+/// A self-describing Skir type that carries both a type signature and all
+/// record definitions (structs and enums) it references, keyed by their
+/// `"<module_path>:<qualified_name>"` ID.
 pub type TypeDescriptor {
-  Primitive(PrimitiveType)
-  Optional(TypeDescriptor)
-  Array(item_type: TypeDescriptor, key_extractor: String)
-  Struct(StructDescriptor)
-  Enum(EnumDescriptor)
+  TypeDescriptor(
+    type_sig: TypeSignature,
+    records: Dict(String, RecordDescriptor),
+  )
+}
+
+/// A record definition: either a struct or an enum.
+pub type RecordDescriptor {
+  StructRecord(StructDescriptor)
+  EnumRecord(EnumDescriptor)
 }
 
 pub type StructDescriptor {
@@ -73,12 +96,7 @@ pub type StructDescriptor {
 }
 
 pub type StructField {
-  StructField(
-    name: String,
-    number: Int,
-    field_type: TypeDescriptor,
-    doc: String,
-  )
+  StructField(name: String, number: Int, field_type: TypeSignature, doc: String)
 }
 
 pub type EnumDescriptor {
@@ -97,7 +115,7 @@ pub type EnumVariant {
   WrapperVariant(
     name: String,
     number: Int,
-    variant_type: TypeDescriptor,
+    variant_type: TypeSignature,
     doc: String,
   )
 }
@@ -114,78 +132,41 @@ fn enum_record_id(e: EnumDescriptor) -> String {
   e.module_path <> ":" <> e.qualified_name
 }
 
+fn record_descriptor_id(rd: RecordDescriptor) -> String {
+  case rd {
+    StructRecord(s) -> struct_record_id(s)
+    EnumRecord(e) -> enum_record_id(e)
+  }
+}
+
 /// Serializes a TypeDescriptor to a pretty-printed JSON string.
 /// The format is compatible with the Go and Rust skir client implementations.
 pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
-  let #(order, id_to_json) = collect_records(td, [], dict.new())
-  let type_sig = type_signature_to_json(td, "  ")
-  let records_content = case order {
+  let type_sig_json = type_signature_to_json(td.type_sig, "  ")
+  let records_sorted =
+    list.sort(dict.to_list(td.records), fn(a, b) { string.compare(a.0, b.0) })
+  let records_content = case records_sorted {
     [] -> ""
     _ -> {
       let parts =
-        list.map(order, fn(id) {
-          case dict.get(id_to_json, id) {
-            Ok(s) -> s
-            Error(_) -> ""
-          }
+        list.map(records_sorted, fn(pair) {
+          record_descriptor_to_json(pair.1, "    ")
         })
       "\n    " <> string.join(parts, ",\n    ") <> "\n  "
     }
   }
   "{\n  \"type\": "
-  <> type_sig
+  <> type_sig_json
   <> ",\n  \"records\": ["
   <> records_content
   <> "]\n}"
 }
 
-// Collects record definitions in DFS pre-order, mirroring the Go/Rust approach.
-fn collect_records(
-  td: TypeDescriptor,
-  order: List(String),
-  id_to_json: Dict(String, String),
-) -> #(List(String), Dict(String, String)) {
-  case td {
-    Primitive(_) -> #(order, id_to_json)
-    Optional(inner) -> collect_records(inner, order, id_to_json)
-    Array(item_type:, ..) -> collect_records(item_type, order, id_to_json)
-    Struct(s) -> {
-      let rid = struct_record_id(s)
-      case dict.has_key(id_to_json, rid) {
-        True -> #(order, id_to_json)
-        False -> {
-          // Mark as in-progress with empty sentinel to break cycles.
-          let id_to_json = dict.insert(id_to_json, rid, "")
-          let new_order = list.append(order, [rid])
-          let sj = struct_record_to_json(s, "    ")
-          let id_to_json = dict.insert(id_to_json, rid, sj)
-          list.fold(s.fields, #(new_order, id_to_json), fn(acc, field) {
-            let #(o, m) = acc
-            collect_records(field.field_type, o, m)
-          })
-        }
-      }
-    }
-    Enum(e) -> {
-      let rid = enum_record_id(e)
-      case dict.has_key(id_to_json, rid) {
-        True -> #(order, id_to_json)
-        False -> {
-          let id_to_json = dict.insert(id_to_json, rid, "")
-          let new_order = list.append(order, [rid])
-          let ej = enum_record_to_json(e, "    ")
-          let id_to_json = dict.insert(id_to_json, rid, ej)
-          list.fold(e.variants, #(new_order, id_to_json), fn(acc, variant) {
-            let #(o, m) = acc
-            case variant {
-              WrapperVariant(variant_type:, ..) ->
-                collect_records(variant_type, o, m)
-              ConstantVariant(..) -> #(o, m)
-            }
-          })
-        }
-      }
-    }
+// Builds the JSON for a record descriptor.
+fn record_descriptor_to_json(rd: RecordDescriptor, indent: String) -> String {
+  case rd {
+    StructRecord(s) -> struct_record_to_json(s, indent)
+    EnumRecord(e) -> enum_record_to_json(e, indent)
   }
 }
 
@@ -393,9 +374,9 @@ fn variant_doc(v: EnumVariant) -> String {
 
 // Builds the JSON for a type signature.
 // `indent` is the indentation of the enclosing context.
-fn type_signature_to_json(td: TypeDescriptor, indent: String) -> String {
+fn type_signature_to_json(ts: TypeSignature, indent: String) -> String {
   let inner = indent <> "  "
-  case td {
+  case ts {
     Primitive(p) ->
       "{\n"
       <> inner
@@ -406,13 +387,13 @@ fn type_signature_to_json(td: TypeDescriptor, indent: String) -> String {
       <> "\"\n"
       <> indent
       <> "}"
-    Optional(inner_td) ->
+    Optional(inner_ts) ->
       "{\n"
       <> inner
       <> "\"kind\": \"optional\",\n"
       <> inner
       <> "\"value\": "
-      <> type_signature_to_json(inner_td, inner)
+      <> type_signature_to_json(inner_ts, inner)
       <> "\n"
       <> indent
       <> "}"
@@ -441,23 +422,13 @@ fn type_signature_to_json(td: TypeDescriptor, indent: String) -> String {
       <> indent
       <> "}"
     }
-    Struct(s) ->
+    Record(id) ->
       "{\n"
       <> inner
       <> "\"kind\": \"record\",\n"
       <> inner
       <> "\"value\": "
-      <> json_escape_string(struct_record_id(s))
-      <> "\n"
-      <> indent
-      <> "}"
-    Enum(e) ->
-      "{\n"
-      <> inner
-      <> "\"kind\": \"record\",\n"
-      <> inner
-      <> "\"value\": "
-      <> json_escape_string(enum_record_id(e))
+      <> json_escape_string(id)
       <> "\n"
       <> indent
       <> "}"
@@ -513,20 +484,20 @@ fn parse_type_descriptor_from_value(
   root: JsonValue,
 ) -> Result(TypeDescriptor, String) {
   let records_json = json_obj_get_array(root, "records")
-  // Records in the JSON are in DFS pre-order (parents before children).
-  // Process them in reverse so children are resolved before parents.
-  let reversed = list.reverse(records_json)
-  use records_map <- result.try(build_records_map(reversed, dict.new()))
+  use records_map <- result.try(build_records_map(records_json, dict.new()))
   case json_obj_get_field(root, "type") {
     Error(_) -> Error("type descriptor JSON missing 'type' field")
-    Ok(type_val) -> parse_type_signature(type_val, records_map)
+    Ok(type_val) ->
+      result.map(parse_type_signature(type_val), fn(type_sig) {
+        TypeDescriptor(type_sig:, records: records_map)
+      })
   }
 }
 
 fn build_records_map(
   records_json: List(JsonValue),
-  records_map: Dict(String, TypeDescriptor),
-) -> Result(Dict(String, TypeDescriptor), String) {
+  records_map: Dict(String, RecordDescriptor),
+) -> Result(Dict(String, RecordDescriptor), String) {
   case records_json {
     [] -> Ok(records_map)
     [rec, ..rest] -> {
@@ -540,8 +511,8 @@ fn build_records_map(
 
 fn parse_and_add_record(
   rec: JsonValue,
-  records_map: Dict(String, TypeDescriptor),
-) -> Result(Dict(String, TypeDescriptor), String) {
+  records_map: Dict(String, RecordDescriptor),
+) -> Result(Dict(String, RecordDescriptor), String) {
   let kind = json_obj_get_string(rec, "kind")
   let id = json_obj_get_string(rec, "id")
   let doc = json_obj_get_string(rec, "doc")
@@ -553,7 +524,7 @@ fn parse_and_add_record(
       case kind {
         "struct" -> {
           let fields_json = json_obj_get_array(rec, "fields")
-          case parse_struct_fields(fields_json, records_map) {
+          case parse_struct_fields(fields_json) {
             Error(e) -> Error(e)
             Ok(fields) -> {
               let sd =
@@ -565,13 +536,13 @@ fn parse_and_add_record(
                   removed_numbers: removed,
                   fields: fields,
                 )
-              Ok(dict.insert(records_map, id, Struct(sd)))
+              Ok(dict.insert(records_map, id, StructRecord(sd)))
             }
           }
         }
         "enum" -> {
           let variants_json = json_obj_get_array(rec, "variants")
-          case parse_enum_variants(variants_json, records_map) {
+          case parse_enum_variants(variants_json) {
             Error(e) -> Error(e)
             Ok(variants) -> {
               let ed =
@@ -583,7 +554,7 @@ fn parse_and_add_record(
                   removed_numbers: removed,
                   variants: variants,
                 )
-              Ok(dict.insert(records_map, id, Enum(ed)))
+              Ok(dict.insert(records_map, id, EnumRecord(ed)))
             }
           }
         }
@@ -595,7 +566,6 @@ fn parse_and_add_record(
 
 fn parse_struct_fields(
   fields_json: List(JsonValue),
-  records_map: Dict(String, TypeDescriptor),
 ) -> Result(List(StructField), String) {
   list.try_map(fields_json, fn(f) {
     let name = json_obj_get_string(f, "name")
@@ -604,23 +574,20 @@ fn parse_struct_fields(
     case json_obj_get_field(f, "type") {
       Error(_) -> Error("struct field \"" <> name <> "\" missing 'type'")
       Ok(type_val) ->
-        case parse_type_signature(type_val, records_map) {
-          Error(e) -> Error(e)
-          Ok(field_type) ->
-            Ok(StructField(
-              name: name,
-              number: number,
-              field_type: field_type,
-              doc: doc,
-            ))
-        }
+        result.map(parse_type_signature(type_val), fn(field_type) {
+          StructField(
+            name: name,
+            number: number,
+            field_type: field_type,
+            doc: doc,
+          )
+        })
     }
   })
 }
 
 fn parse_enum_variants(
   variants_json: List(JsonValue),
-  records_map: Dict(String, TypeDescriptor),
 ) -> Result(List(EnumVariant), String) {
   list.try_map(variants_json, fn(v) {
     let name = json_obj_get_string(v, "name")
@@ -629,24 +596,19 @@ fn parse_enum_variants(
     case json_obj_get_field(v, "type") {
       Error(_) -> Ok(ConstantVariant(name: name, number: number, doc: doc))
       Ok(type_val) ->
-        case parse_type_signature(type_val, records_map) {
-          Error(e) -> Error(e)
-          Ok(variant_type) ->
-            Ok(WrapperVariant(
-              name: name,
-              number: number,
-              variant_type: variant_type,
-              doc: doc,
-            ))
-        }
+        result.map(parse_type_signature(type_val), fn(variant_type) {
+          WrapperVariant(
+            name: name,
+            number: number,
+            variant_type: variant_type,
+            doc: doc,
+          )
+        })
     }
   })
 }
 
-fn parse_type_signature(
-  v: JsonValue,
-  records_map: Dict(String, TypeDescriptor),
-) -> Result(TypeDescriptor, String) {
+fn parse_type_signature(v: JsonValue) -> Result(TypeSignature, String) {
   let kind = json_obj_get_string(v, "kind")
   case json_obj_get_field(v, "value") {
     Error(_) -> Error("type signature missing 'value', kind=" <> kind)
@@ -658,27 +620,21 @@ fn parse_type_signature(
             Ok(prim_str) ->
               result.map(primitive_type_from_str(prim_str), Primitive)
           }
-        "optional" ->
-          result.map(parse_type_signature(value_json, records_map), Optional)
+        "optional" -> result.map(parse_type_signature(value_json), Optional)
         "array" -> {
           let key_ext = json_obj_get_string(value_json, "key_extractor")
           case json_obj_get_field(value_json, "item") {
             Error(_) -> Error("array type missing 'item'")
             Ok(item_val) ->
-              result.map(
-                parse_type_signature(item_val, records_map),
-                fn(item_type) { Array(item_type:, key_extractor: key_ext) },
-              )
+              result.map(parse_type_signature(item_val), fn(item_type) {
+                Array(item_type:, key_extractor: key_ext)
+              })
           }
         }
         "record" ->
           case json_as_string(value_json) {
             Error(_) -> Error("record type 'value' must be a string")
-            Ok(record_id) ->
-              case dict.get(records_map, record_id) {
-                Ok(td) -> Ok(td)
-                Error(_) -> Error("unknown record id: " <> record_id)
-              }
+            Ok(record_id) -> Ok(Record(record_id))
           }
         _ -> Error("unknown type kind: " <> kind)
       }

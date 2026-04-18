@@ -67,6 +67,15 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
       }
     }
 
+    // Compute unique Gleam type names for all records (needed when multiple
+    // records in the same group share the same short name).
+    const uniqueTypeNames = new Map<RecordKey, string>();
+    for (const group of allGroups) {
+      for (const rec of group.records) {
+        uniqueTypeNames.set(rec.record.key, computeUniqueTypeName(rec, group));
+      }
+    }
+
     // Second pass: generate code for each group.
     for (const group of allGroups) {
       outputFiles.push({
@@ -75,6 +84,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
           group,
           recordMap,
           keyToGroup,
+          uniqueTypeNames,
         ).generate(),
       });
     }
@@ -232,6 +242,28 @@ function computeConstDefaultKeys(
   );
 }
 
+/**
+ * Returns the Gleam type name for a record within its group. If multiple
+ * records in the same group share the same short name (e.g. three levels of
+ * nested `Foo`), we fall back to the full ancestor path in UpperCamel to
+ * guarantee uniqueness within the generated Gleam module.
+ */
+function computeUniqueTypeName(
+  record: RecordLocation,
+  group: GroupInfo,
+): string {
+  const shortName = getTypeName(record);
+  const hasCollision = group.records.some(
+    (r) => r.record.key !== record.record.key && getTypeName(r) === shortName,
+  );
+  if (hasCollision) {
+    return record.recordAncestors
+      .map((a) => convertCase(a.name.text, "UpperCamel"))
+      .join("");
+  }
+  return shortName;
+}
+
 // Generates the code for one Gleam source file (one GroupInfo → one file).
 class GleamSourceFileGenerator {
   private code = "";
@@ -242,20 +274,24 @@ class GleamSourceFileGenerator {
     private readonly group: GroupInfo,
     recordMap: ReadonlyMap<RecordKey, RecordLocation>,
     private readonly keyToGroup: ReadonlyMap<RecordKey, GroupInfo>,
+    private readonly uniqueTypeNames: ReadonlyMap<RecordKey, string>,
   ) {
+    // Returns the unique Gleam type name for a given record key.
+    const uniqueNameFor = (key: RecordKey): string => {
+      return uniqueTypeNames.get(key) ?? getTypeName(recordMap.get(key)!);
+    };
+
     // Compute the default and serializer function name for a given record key.
     // Single-record files use simple "default"/"serializer"; multi-record files
-    // prefix with the snake_case type name to avoid duplicate definitions.
+    // prefix with the snake_case unique type name to avoid duplicate definitions.
     const fnNameFor = (key: RecordKey, base: string): string => {
       const g = keyToGroup.get(key)!;
       if (g.records.length === 1) return base;
-      const rec = recordMap.get(key)!;
-      return `${convertCase(getTypeName(rec), "lower_underscore")}_${base}`;
+      return `${convertCase(uniqueNameFor(key), "lower_underscore")}_${base}`;
     };
 
     const typeExprFor = (key: RecordKey): string => {
-      const recLoc = recordMap.get(key)!;
-      const typeName = getTypeName(recLoc);
+      const typeName = uniqueNameFor(key);
       if (group.keySet.has(key)) return typeName;
       return `${keyToGroup.get(key)!.alias}.${typeName}`;
     };
@@ -398,7 +434,8 @@ class GleamSourceFileGenerator {
 
   private writeTypesForStruct(struct: RecordLocation): void {
     const { typeSpeller } = this;
-    const typeName = getTypeName(struct);
+    const typeName =
+      this.uniqueTypeNames.get(struct.record.key) ?? getTypeName(struct);
     // In a multi-record file (mutual recursion), prefix function names with
     // the snake_case type name so each type has uniquely named functions.
     const fnPrefix =
@@ -500,7 +537,8 @@ class GleamSourceFileGenerator {
 
   private writeTypesForEnum(record: RecordLocation): void {
     const { typeSpeller } = this;
-    const typeName = getTypeName(record);
+    const typeName =
+      this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
     const fnPrefix =
       this.group.records.length === 1
         ? ""
