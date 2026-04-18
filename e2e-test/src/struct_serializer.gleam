@@ -106,7 +106,7 @@ pub fn new_serializer(
   qualified_name qualified_name: String,
   module_path module_path: String,
   doc doc: String,
-  fields fields: List(FieldAdapter(s)),
+  ordered_fields ordered_fields: List(FieldAdapter(s)),
   default default: s,
   get_unrecognized get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
   set_unrecognized set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) ->
@@ -114,13 +114,14 @@ pub fn new_serializer(
   removed_numbers removed_numbers: List(Int),
   recognized_slot_count recognized_slot_count: Int,
 ) -> serializer.Serializer(s) {
-  let fields = list.sort(fields, fn(a, b) { int.compare(a.number, b.number) })
   serializer.make_serializer(
     serializer.make_type_adapter(
-      is_default: fn(s) { struct_is_default(fields, get_unrecognized, s) },
+      is_default: fn(s) {
+        struct_is_default(ordered_fields, get_unrecognized, s)
+      },
       append_json: fn(s, tree, eol_indent) {
         struct_append_json(
-          fields,
+          ordered_fields,
           get_unrecognized,
           recognized_slot_count,
           s,
@@ -130,17 +131,30 @@ pub fn new_serializer(
       },
       decode_json: decode.dynamic
         |> decode.then(fn(d) {
-          case struct_decode_json(fields, recognized_slot_count, d, default) {
+          case
+            struct_decode_json(
+              ordered_fields,
+              recognized_slot_count,
+              d,
+              default,
+            )
+          {
             Ok(s) -> decode.success(s)
             Error(msg) -> decode.failure(default, msg)
           }
         }),
       encode: fn(s, tree) {
-        struct_encode(fields, get_unrecognized, recognized_slot_count, s, tree)
+        struct_encode(
+          ordered_fields,
+          get_unrecognized,
+          recognized_slot_count,
+          s,
+          tree,
+        )
       },
       decode: fn(bits, keep_unrecognized) {
         struct_decode(
-          fields,
+          ordered_fields,
           set_unrecognized,
           recognized_slot_count,
           bits,
@@ -150,9 +164,9 @@ pub fn new_serializer(
       },
       type_descriptor: fn() {
         let id = module_path <> ":" <> qualified_name
-        let field_tds = list.map(fields, fn(f) { f.type_descriptor() })
+        let field_tds = list.map(ordered_fields, fn(f) { f.type_descriptor() })
         let struct_fields =
-          list.map2(fields, field_tds, fn(f, ftd) {
+          list.map2(ordered_fields, field_tds, fn(f, ftd) {
             type_descriptor.StructField(
               name: f.name,
               number: f.number,
