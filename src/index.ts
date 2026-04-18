@@ -517,6 +517,35 @@ class GleamSourceFileGenerator {
       this.push("}\n\n");
     }
 
+    // `new` constructor function.
+    this.push(`/// Creates a new \`${typeName}\` with the given field values.\n`);
+    this.push(
+      `pub fn ${fnPrefix}new(\n`,
+    );
+    for (const field of fields) {
+      const fieldName = toFieldName(field.name.text);
+      if (field.isRecursive === "hard") {
+        const innerType = typeSpeller.getGleamType(field.type!);
+        this.push(`${fieldName}: ${innerType},\n`);
+      } else {
+        const gleamType = typeSpeller.getGleamType(field.type!);
+        this.push(`${fieldName}: ${gleamType},\n`);
+      }
+    }
+    this.push(`) -> ${typeName} {\n`);
+    this.push(`${typeName}(\n`);
+    for (const field of fields) {
+      const fieldName = toFieldName(field.name.text);
+      if (field.isRecursive === "hard") {
+        this.push(`${fieldName}_rec: option.Some(${fieldName}),\n`);
+      } else {
+        this.push(`${fieldName}: ${fieldName},\n`);
+      }
+    }
+    this.push(`unrecognized_: option.None,\n`);
+    this.push(`)\n`);
+    this.push(`}\n\n`);
+
     // Field spec functions (sorted by number).
     const fieldsByNumber = [...struct.record.fields].sort(
       (a, b) => a.number - b.number,
