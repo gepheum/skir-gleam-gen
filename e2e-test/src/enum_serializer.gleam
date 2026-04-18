@@ -9,6 +9,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
 import type_descriptor
@@ -235,7 +236,26 @@ pub fn new_serializer(
               variants_by_name,
               removed_numbers,
               unknown_default,
+              wrap_unrecognized,
               d,
+              False,
+            )
+          {
+            Ok(e) -> decode.success(e)
+            Error(msg) -> decode.failure(unknown_default, msg)
+          }
+        }),
+      decode_json_keep: decode.dynamic
+        |> decode.then(fn(d) {
+          case
+            enum_decode_json(
+              variants_by_number,
+              variants_by_name,
+              removed_numbers,
+              unknown_default,
+              wrap_unrecognized,
+              d,
+              True,
             )
           {
             Ok(e) -> decode.success(e)
@@ -320,22 +340,53 @@ fn unknown_to_json(
 // JSON decoding
 // =============================================================================
 
+// Converts a dynamic.Dynamic value (parsed from JSON) back to a JSON string.
+fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
+  case decode.run(d, decode.int) {
+    Ok(n) -> int.to_string(n)
+    _ ->
+      case decode.run(d, decode.bool) {
+        Ok(True) -> "true"
+        Ok(False) -> "false"
+        _ ->
+          case decode.run(d, decode.string) {
+            Ok(s) -> json.to_string(json.string(s))
+            _ ->
+              case decode.run(d, decode.list(decode.dynamic)) {
+                Ok(lst) ->
+                  "["
+                  <> string.join(list.map(lst, dynamic_to_json_string), ",")
+                  <> "]"
+                _ -> "null"
+              }
+          }
+      }
+  }
+}
+
 fn enum_decode_json(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   variants_by_name: dict.Dict(String, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
+  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
   d: dynamic.Dynamic,
+  keep: Bool,
 ) -> Result(e, String) {
   // Try as integer: constant variant by number (dense JSON).
   case decode.run(d, decode.int) {
     Ok(n) ->
-      Ok(resolve_constant_number(
+      case resolve_constant_number_keep(
         n,
         variants_by_number,
         removed_numbers,
         unknown_default,
-      ))
+        wrap_unrecognized,
+        keep,
+      ) {
+        Ok(e) -> Ok(e)
+        Error(e) -> Error(e)
+      }
     Error(_) ->
       // Try as bool: true=1, false=0.
       case decode.run(d, decode.bool) {
@@ -379,7 +430,29 @@ fn enum_decode_json(
                         True -> Ok(unknown_default)
                         False ->
                           case dict.get(variants_by_number, n) {
-                            Error(_) -> Ok(unknown_default)
+                            Error(_) ->
+                              case keep {
+                                False -> Ok(unknown_default)
+                                True -> {
+                                  // Store as unrecognized: reconstruct JSON array
+                                  let json_bytes =
+                                    bit_array.from_string(
+                                      "["
+                                      <> int.to_string(n)
+                                      <> ","
+                                      <> dynamic_to_json_string(val_d)
+                                      <> "]",
+                                    )
+                                  Ok(wrap_unrecognized(
+                                    Some(
+                                      unrecognized.variant_data_from_json(
+                                        n,
+                                        json_bytes,
+                                      ),
+                                    ),
+                                  ))
+                                }
+                              }
                             Ok(v) -> v.wrap_from_json(val_d)
                           }
                       }
@@ -438,6 +511,40 @@ fn resolve_constant_number(
             None ->
               // Wrapper variant seen in constant context: use default payload.
               option.unwrap(v.wrap_default(), unknown_default)
+          }
+      }
+  }
+}
+
+fn resolve_constant_number_keep(
+  number: Int,
+  variants_by_number: dict.Dict(Int, VariantAdapter(e)),
+  removed_numbers: List(Int),
+  unknown_default: e,
+  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  keep: Bool,
+) -> Result(e, String) {
+  case list.contains(removed_numbers, number) {
+    True -> Ok(unknown_default)
+    False ->
+      case dict.get(variants_by_number, number) {
+        Ok(v) ->
+          case v.constant {
+            Some(c) -> Ok(c)
+            None -> Ok(option.unwrap(v.wrap_default(), unknown_default))
+          }
+        Error(_) ->
+          case keep {
+            False -> Ok(unknown_default)
+            True -> {
+              let json_bytes =
+                bit_array.from_string(int.to_string(number))
+              Ok(wrap_unrecognized(
+                Some(
+                  unrecognized.variant_data_from_json(number, json_bytes),
+                ),
+              ))
+            }
           }
       }
   }

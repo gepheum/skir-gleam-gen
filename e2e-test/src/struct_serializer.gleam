@@ -4,10 +4,12 @@ import gleam/bytes_tree.{type BytesTree}
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
+import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
@@ -155,6 +157,21 @@ pub fn new_serializer(
             Error(msg) -> decode.failure(default, msg)
           }
         }),
+      decode_json_keep: decode.dynamic
+        |> decode.then(fn(d) {
+          case
+            struct_decode_json_keep(
+              ordered_fields,
+              set_unrecognized,
+              recognized_slot_count,
+              d,
+              default,
+            )
+          {
+            Ok(s) -> decode.success(s)
+            Error(msg) -> decode.failure(default, msg)
+          }
+        }),
       encode: fn(s, tree) {
         struct_encode(
           ordered_fields,
@@ -245,22 +262,6 @@ fn struct_append_json(
         tree,
       )
     _ -> append_readable_json(fields, s, tree, eol_indent)
-  }
-}
-
-fn struct_decode_json(
-  fields: List(FieldAdapter(s)),
-  recognized_slot_count: Int,
-  d: dynamic.Dynamic,
-  s: s,
-) -> Result(s, String) {
-  case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> from_dense_json(fields, recognized_slot_count, arr, s, False)
-    Error(_) ->
-      case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
-        Ok(obj) -> from_readable_json(fields, obj, s)
-        Error(_) -> Ok(s)
-      }
   }
 }
 
@@ -477,16 +478,115 @@ fn append_json_slots(
 // JSON decode helpers
 // =============================================================================
 
+fn struct_decode_json(
+  fields: List(FieldAdapter(s)),
+  recognized_slot_count: Int,
+  d: dynamic.Dynamic,
+  s: s,
+) -> Result(s, String) {
+  case decode.run(d, decode.list(decode.dynamic)) {
+    Ok(arr) -> from_dense_json(fields, recognized_slot_count, arr, s)
+    Error(_) ->
+      case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
+        Ok(obj) -> from_readable_json(fields, obj, s)
+        Error(_) -> Ok(s)
+      }
+  }
+}
+
+fn struct_decode_json_keep(
+  fields: List(FieldAdapter(s)),
+  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
+  recognized_slot_count: Int,
+  d: dynamic.Dynamic,
+  s: s,
+) -> Result(s, String) {
+  case decode.run(d, decode.list(decode.dynamic)) {
+    Ok(arr) ->
+      from_dense_json_keep(
+        fields,
+        set_unrecognized,
+        recognized_slot_count,
+        arr,
+        s,
+      )
+    Error(_) ->
+      case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
+        Ok(obj) -> from_readable_json(fields, obj, s)
+        Error(_) -> Ok(s)
+      }
+  }
+}
+
 fn from_dense_json(
   fields: List(FieldAdapter(s)),
   recognized_slot_count: Int,
   arr: List(dynamic.Dynamic),
   s: s,
-  _keep_unrecognized: Bool,
 ) -> Result(s, String) {
   let num_to_fill = int.min(list.length(arr), recognized_slot_count)
   // fields are sorted by number; walk both lists linearly
   from_dense_json_loop(fields, arr, 0, num_to_fill, s)
+}
+
+fn from_dense_json_keep(
+  fields: List(FieldAdapter(s)),
+  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
+  recognized_slot_count: Int,
+  arr: List(dynamic.Dynamic),
+  s: s,
+) -> Result(s, String) {
+  let arr_len = list.length(arr)
+  let num_to_fill = int.min(arr_len, recognized_slot_count)
+  use s <- result.try(from_dense_json_loop(fields, arr, 0, num_to_fill, s))
+  case arr_len > recognized_slot_count {
+    False -> Ok(s)
+    True -> {
+      let extra = list.drop(arr, recognized_slot_count)
+      let extra_json =
+        "["
+        <> string.join(list.map(extra, dynamic_to_json_string), ",")
+        <> "]"
+      let data =
+        unrecognized.fields_data_from_json(arr_len, bit_array.from_string(extra_json))
+      Ok(set_unrecognized(s, Some(data)))
+    }
+  }
+}
+
+// Converts a dynamic.Dynamic value (parsed from JSON) back to a JSON string.
+fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
+  case decode.run(d, decode.int) {
+    Ok(n) -> int.to_string(n)
+    _ ->
+      case decode.run(d, decode.bool) {
+        Ok(True) -> "true"
+        Ok(False) -> "false"
+        _ ->
+          case decode.run(d, decode.float) {
+            Ok(f) ->
+              case float.loosely_equals(float.round(f) |> int.to_float, f, 0.0) {
+                True -> int.to_string(float.round(f))
+                False -> float.to_string(f)
+              }
+            _ ->
+              case decode.run(d, decode.string) {
+                Ok(s) -> json.to_string(json.string(s))
+                _ ->
+                  case decode.run(d, decode.list(decode.dynamic)) {
+                    Ok(lst) ->
+                      "["
+                      <> string.join(
+                        list.map(lst, dynamic_to_json_string),
+                        ",",
+                      )
+                      <> "]"
+                    _ -> "null"
+                  }
+              }
+          }
+      }
+  }
 }
 
 fn from_dense_json_loop(

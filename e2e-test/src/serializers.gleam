@@ -343,13 +343,25 @@ fn float_to_json_str(f: Float) -> String {
   }
 }
 
+// Returns +Infinity as a Float (computed at runtime to avoid literal issues).
+fn float_pos_infinity() -> Float {
+  1.0e308 *. 2.0
+}
+
+// Returns -Infinity as a Float (computed at runtime to avoid literal issues).
+fn float_neg_infinity() -> Float {
+  -1.0e308 *. 2.0
+}
+
 fn float_decode_json() -> Decoder(Float) {
   decode.one_of(decode.float, [
     decode.int |> decode.map(int.to_float),
     decode.string
       |> decode.map(fn(s) {
         case s {
-          "NaN" | "Infinity" | "-Infinity" -> 0.0
+          "NaN" -> 0.0
+          "Infinity" -> float_pos_infinity()
+          "-Infinity" -> float_neg_infinity()
           _ ->
             case float.parse(s) {
               Ok(f) -> f
@@ -383,6 +395,12 @@ fn float32_adapter() -> TypeAdapter(Float) {
       case bits {
         <<240, rest:bits>> ->
           case rest {
+            // +Infinity: 0x7F800000 little-endian
+            <<0, 0, 128, 127, remaining:bits>> ->
+              Ok(#(float_pos_infinity(), remaining))
+            // -Infinity: 0xFF800000 little-endian
+            <<0, 0, 128, 255, remaining:bits>> ->
+              Ok(#(float_neg_infinity(), remaining))
             <<v:float-size(32)-little, remaining:bits>> -> Ok(#(v, remaining))
             _ -> Error("truncated float32 data")
           }
@@ -424,6 +442,12 @@ fn float64_adapter() -> TypeAdapter(Float) {
       case bits {
         <<241, rest:bits>> ->
           case rest {
+            // +Infinity: 0x7FF0000000000000 little-endian
+            <<0, 0, 0, 0, 0, 0, 240, 127, remaining:bits>> ->
+              Ok(#(float_pos_infinity(), remaining))
+            // -Infinity: 0xFFF0000000000000 little-endian
+            <<0, 0, 0, 0, 0, 0, 240, 255, remaining:bits>> ->
+              Ok(#(float_neg_infinity(), remaining))
             <<v:float-size(64)-little, remaining:bits>> -> Ok(#(v, remaining))
             _ -> Error("truncated float64 data")
           }

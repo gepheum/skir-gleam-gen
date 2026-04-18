@@ -3,7 +3,9 @@
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 // TODO: fix all comments
+// TODO: the logic for determining what types to import is flawed...
 // TODO: use enum for UnrecognizedValues...
+
 
 import {
   type CodeGenerator,
@@ -375,7 +377,7 @@ class GleamSourceFileGenerator {
     const hasRecursiveEnumVariant = this.group.records.some(
       (r) =>
         r.record.recordType === "enum" &&
-        r.record.variants.some(
+        r.record.fields.some(
           (v) => v.type?.kind === "record" && v.type.key === r.record.key,
         ),
     );
