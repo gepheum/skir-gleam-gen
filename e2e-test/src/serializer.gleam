@@ -48,18 +48,16 @@ pub fn make_type_adapter(
 
 /// A value that can serialize and deserialize values of type `a` to/from JSON
 /// and binary formats.
-pub opaque type Serializer(a) {
+pub type Serializer(a) {
   Serializer(adapter: TypeAdapter(a))
 }
 
 /// Constructs a `Serializer` from a `TypeAdapter`.
-/// Used internally by the Skir client library and by generated code.
 pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
   Serializer(adapter:)
 }
 
-/// Returns the `TypeAdapter` inside a `Serializer`.
-/// Used internally by composite serializers that delegate to an item serializer.
+/// Extracts the `TypeAdapter` from a `Serializer`.
 pub fn get_adapter(serializer: Serializer(a)) -> TypeAdapter(a) {
   serializer.adapter
 }
