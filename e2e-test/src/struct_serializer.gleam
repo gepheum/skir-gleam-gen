@@ -544,11 +544,12 @@ fn from_dense_json_keep(
     True -> {
       let extra = list.drop(arr, recognized_slot_count)
       let extra_json =
-        "["
-        <> string.join(list.map(extra, dynamic_to_json_string), ",")
-        <> "]"
+        "[" <> string.join(list.map(extra, dynamic_to_json_string), ",") <> "]"
       let data =
-        unrecognized.fields_data_from_json(arr_len, bit_array.from_string(extra_json))
+        unrecognized.fields_data_from_json(
+          arr_len,
+          bit_array.from_string(extra_json),
+        )
       Ok(set_unrecognized(s, Some(data)))
     }
   }
@@ -565,7 +566,9 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
         _ ->
           case decode.run(d, decode.float) {
             Ok(f) ->
-              case float.loosely_equals(float.round(f) |> int.to_float, f, 0.0) {
+              case
+                float.loosely_equals(float.round(f) |> int.to_float, f, 0.0)
+              {
                 True -> int.to_string(float.round(f))
                 False -> float.to_string(f)
               }
@@ -576,10 +579,7 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
                   case decode.run(d, decode.list(decode.dynamic)) {
                     Ok(lst) ->
                       "["
-                      <> string.join(
-                        list.map(lst, dynamic_to_json_string),
-                        ",",
-                      )
+                      <> string.join(list.map(lst, dynamic_to_json_string), ",")
                       <> "]"
                     _ -> "null"
                   }

@@ -376,14 +376,16 @@ fn enum_decode_json(
   // Try as integer: constant variant by number (dense JSON).
   case decode.run(d, decode.int) {
     Ok(n) ->
-      case resolve_constant_number_keep(
-        n,
-        variants_by_number,
-        removed_numbers,
-        unknown_default,
-        wrap_unrecognized,
-        keep,
-      ) {
+      case
+        resolve_constant_number_keep(
+          n,
+          variants_by_number,
+          removed_numbers,
+          unknown_default,
+          wrap_unrecognized,
+          keep,
+        )
+      {
         Ok(e) -> Ok(e)
         Error(e) -> Error(e)
       }
@@ -443,14 +445,14 @@ fn enum_decode_json(
                                       <> dynamic_to_json_string(val_d)
                                       <> "]",
                                     )
-                                  Ok(wrap_unrecognized(
-                                    Some(
-                                      unrecognized.variant_data_from_json(
+                                  Ok(
+                                    wrap_unrecognized(
+                                      Some(unrecognized.variant_data_from_json(
                                         n,
                                         json_bytes,
-                                      ),
+                                      )),
                                     ),
-                                  ))
+                                  )
                                 }
                               }
                             Ok(v) -> v.wrap_from_json(val_d)
@@ -537,13 +539,12 @@ fn resolve_constant_number_keep(
           case keep {
             False -> Ok(unknown_default)
             True -> {
-              let json_bytes =
-                bit_array.from_string(int.to_string(number))
-              Ok(wrap_unrecognized(
-                Some(
-                  unrecognized.variant_data_from_json(number, json_bytes),
+              let json_bytes = bit_array.from_string(int.to_string(number))
+              Ok(
+                wrap_unrecognized(
+                  Some(unrecognized.variant_data_from_json(number, json_bytes)),
                 ),
-              ))
+              )
             }
           }
       }
