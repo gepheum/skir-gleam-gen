@@ -546,20 +546,31 @@ class GleamSourceFileGenerator {
     this.push(`)\n`);
     this.push(`}\n\n`);
 
-    // Field spec functions (sorted by number).
+    // Serializer.
     const fieldsByNumber = [...struct.record.fields].sort(
       (a, b) => a.number - b.number,
     );
 
     const structDefaultExpr = `${fnPrefix}default${useConstDefault ? "" : "()"}`;
 
+    this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
+    this.push(
+      `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
+    );
+    this.push(`struct_serializer.new_serializer(\n`);
+    this.push(`name: ${JSON.stringify(struct.record.name.text)},\n`);
+    this.push(
+      `qualified_name: ${JSON.stringify(struct.recordAncestors.map((r) => r.name.text).join("."))},\n`,
+    );
+    this.push(`module_path: ${JSON.stringify(struct.modulePath)},\n`);
+    this.push(`doc: ${JSON.stringify(docToCommentText(struct.record.doc))},\n`);
+    this.push(`ordered_fields: [\n`);
     for (const field of fieldsByNumber) {
       const fieldName = toFieldName(field.name.text);
       const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
       const fieldType = typeSpeller.getGleamType(field.type!);
-      this.push(`fn ${fnPrefix}field_spec_${fieldName}_() {\n`);
-      this.push(`struct_serializer.FieldSpec(\n`);
+      this.push(`struct_serializer.field_spec_to_field_adapter(struct_serializer.FieldSpec(\n`);
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
@@ -580,28 +591,7 @@ class GleamSourceFileGenerator {
       this.push(
         `recursive: ${isRecursive ? "struct_serializer.Recursive" : "struct_serializer.NotRecursive"},\n`,
       );
-      this.push(`)\n`);
-      this.push(`}\n\n`);
-    }
-
-    // Serializer.
-    this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
-    this.push(
-      `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
-    );
-    this.push(`struct_serializer.new_serializer(\n`);
-    this.push(`name: ${JSON.stringify(struct.record.name.text)},\n`);
-    this.push(
-      `qualified_name: ${JSON.stringify(struct.recordAncestors.map((r) => r.name.text).join("."))},\n`,
-    );
-    this.push(`module_path: ${JSON.stringify(struct.modulePath)},\n`);
-    this.push(`doc: ${JSON.stringify(docToCommentText(struct.record.doc))},\n`);
-    this.push(`ordered_fields: [\n`);
-    for (const field of fieldsByNumber) {
-      const fieldName = toFieldName(field.name.text);
-      this.push(
-        `struct_serializer.field_spec_to_field_adapter(${fnPrefix}field_spec_${fieldName}_()),\n`,
-      );
+      this.push(`)),\n`);
     }
     this.push(`],\n`);
     this.push(`default: ${structDefaultExpr},\n`);
