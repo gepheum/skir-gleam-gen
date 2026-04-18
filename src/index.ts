@@ -378,6 +378,7 @@ class GleamSourceFileGenerator {
     this.push(`import skir_client\n`);
     if (hasStructs) {
       this.push(`import struct_serializer\n`);
+      this.push(`import type_descriptor\n`);
     }
     if (hasEnums) {
       this.push(`import enum_serializer\n`);
@@ -640,6 +641,12 @@ class GleamSourceFileGenerator {
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
+      this.push(
+        `default: ${typeSpeller.getDefaultExpression(field.type!)},\n`,
+      );
+      this.push(
+        `type_sig: ${typeSpeller.getTypeSignatureExpression(field.type!)},\n`,
+      );
       if (isHardRec) {
         this.push(`get: fn(s: ${typeName}) { ${fnPrefix}${fieldName}(s) },\n`);
         this.push(

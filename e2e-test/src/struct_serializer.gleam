@@ -24,6 +24,8 @@ pub type FieldSpec(s, f) {
     name: String,
     number: Int,
     doc: String,
+    default: f,
+    type_sig: type_descriptor.TypeSignature,
     get: fn(s) -> f,
     set: fn(s, f) -> s,
     serializer: fn() -> serializer.Serializer(f),
@@ -80,7 +82,7 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
         name: spec.name,
         number: spec.number,
         doc: spec.doc,
-        is_default: fn(s) { spec.serializer().adapter.is_default(spec.get(s)) },
+        is_default: fn(s) { spec.get(s) == spec.default },
         append_json: fn(s, tree, eol_indent) {
           spec.serializer().adapter.append_json(spec.get(s), tree, eol_indent)
         },
@@ -101,7 +103,12 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
             Error(e) -> Error(e)
           }
         },
-        type_descriptor: fn() { spec.serializer().adapter.type_descriptor() },
+        type_descriptor: fn() {
+          type_descriptor.TypeDescriptor(
+            type_sig: spec.type_sig,
+            records: dict.new(),
+          )
+        },
       )
   }
 }

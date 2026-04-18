@@ -142,4 +142,46 @@ export class TypeSpeller {
       }
     }
   }
+
+  /**
+   * Returns the Gleam expression for the TypeSignature of the given type.
+   * Used to populate the `type_sig` field of FieldSpec for recursive fields.
+   */
+  getTypeSignatureExpression(type: ResolvedType): string {
+    switch (type.kind) {
+      case "primitive": {
+        const prim = (
+          {
+            bool: "type_descriptor.Bool",
+            int32: "type_descriptor.Int32",
+            int64: "type_descriptor.Int64",
+            hash64: "type_descriptor.Hash64",
+            float32: "type_descriptor.Float32",
+            float64: "type_descriptor.Float64",
+            timestamp: "type_descriptor.Timestamp",
+            string: "type_descriptor.StringType",
+            bytes: "type_descriptor.Bytes",
+          } as const
+        )[type.primitive];
+        return `type_descriptor.Primitive(${prim})`;
+      }
+      case "record": {
+        const rec = this.recordMap.get(type.key)!;
+        const qualifiedName = rec.recordAncestors
+          .map((a) => a.name.text)
+          .join(".");
+        const id = `${rec.modulePath}:${qualifiedName}`;
+        return `type_descriptor.Record(${JSON.stringify(id)})`;
+      }
+      case "array": {
+        const itemSig = this.getTypeSignatureExpression(type.item);
+        const keyExtractor =
+          type.key?.path.map((p) => p.name.text).join(".") ?? "";
+        return `type_descriptor.Array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
+      }
+      case "optional": {
+        return `type_descriptor.Optional(${this.getTypeSignatureExpression(type.other)})`;
+      }
+    }
+  }
 }
