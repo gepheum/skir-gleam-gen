@@ -113,14 +113,14 @@ fn evaluate_string(expr: goldens.StringExpression) -> Result(String, String) {
   }
 }
 
-fn evaluate_typed_value(tv: goldens.TypedValue) -> Result(EvaluatedValue, String) {
+fn evaluate_typed_value(
+  tv: goldens.TypedValue,
+) -> Result(EvaluatedValue, String) {
   case tv {
     goldens.TypedValueUnknown(_) -> Error("unknown TypedValue variant")
     goldens.TypedValueBool(v) -> Ok(make_ev(v, skir_client.bool_serializer()))
-    goldens.TypedValueInt32(v) ->
-      Ok(make_ev(v, skir_client.int32_serializer()))
-    goldens.TypedValueInt64(v) ->
-      Ok(make_ev(v, skir_client.int64_serializer()))
+    goldens.TypedValueInt32(v) -> Ok(make_ev(v, skir_client.int32_serializer()))
+    goldens.TypedValueInt64(v) -> Ok(make_ev(v, skir_client.int64_serializer()))
     goldens.TypedValueHash64(v) ->
       Ok(make_ev(v, skir_client.hash64_serializer()))
     goldens.TypedValueFloat32(v) ->
@@ -131,22 +131,17 @@ fn evaluate_typed_value(tv: goldens.TypedValue) -> Result(EvaluatedValue, String
       Ok(make_ev(v, skir_client.timestamp_serializer()))
     goldens.TypedValueString(v) ->
       Ok(make_ev(v, skir_client.string_serializer()))
-    goldens.TypedValueBytes(v) ->
-      Ok(make_ev(v, skir_client.bytes_serializer()))
+    goldens.TypedValueBytes(v) -> Ok(make_ev(v, skir_client.bytes_serializer()))
     goldens.TypedValueBoolOptional(v) ->
       Ok(make_ev(
         v,
         skir_client.optional_serializer(skir_client.bool_serializer()),
       ))
     goldens.TypedValueInts(v) ->
-      Ok(make_ev(
-        v,
-        skir_client.list_serializer(skir_client.int32_serializer()),
-      ))
+      Ok(make_ev(v, skir_client.list_serializer(skir_client.int32_serializer())))
     goldens.TypedValuePoint(v) -> Ok(make_ev(v, goldens.point_serializer()))
     goldens.TypedValueColor(v) -> Ok(make_ev(v, goldens.color_serializer()))
-    goldens.TypedValueMyEnum(v) ->
-      Ok(make_ev(v, goldens.my_enum_serializer()))
+    goldens.TypedValueMyEnum(v) -> Ok(make_ev(v, goldens.my_enum_serializer()))
     goldens.TypedValueEnumA(v) -> Ok(make_ev(v, goldens.enum_a_serializer()))
     goldens.TypedValueEnumB(v) -> Ok(make_ev(v, goldens.enum_b_serializer()))
     goldens.TypedValueKeyedArrays(v) ->
@@ -469,19 +464,15 @@ fn verify_reserialize_value(
             )
           {
             Error(e) ->
-              list.Stop(
-                Error("skip-value test failed to parse Point: " <> e),
-              )
+              list.Stop(Error("skip-value test failed to parse Point: " <> e))
             Ok(point) ->
               case point.x == 1 {
                 True -> list.Continue(Ok(Nil))
                 False ->
-                  list.Stop(
-                    Error(
-                      "skip-value test: expected point.x == 1, got "
-                      <> int.to_string(point.x),
-                    ),
-                  )
+                  list.Stop(Error(
+                    "skip-value test: expected point.x == 1, got "
+                    <> int.to_string(point.x),
+                  ))
               }
           }
         }
@@ -500,14 +491,12 @@ fn verify_reserialize_value(
         Ok(alt_json) ->
           case typed_ev.from_json_keep(alt_json) {
             Error(e) ->
-              list.Stop(
-                Error(
-                  e
-                  <> "\n  (while processing alternative JSON: "
-                  <> string.inspect(alt_json)
-                  <> ")",
-                ),
-              )
+              list.Stop(Error(
+                e
+                <> "\n  (while processing alternative JSON: "
+                <> string.inspect(alt_json)
+                <> ")",
+              ))
             Ok(round_tripped) -> {
               let round_trip_json = round_tripped.to_dense_json()
               case list.contains(input.expected_dense_json, round_trip_json) {
@@ -518,17 +507,15 @@ fn verify_reserialize_value(
                       string.inspect(s)
                     })
                     |> join_or
-                  list.Stop(
-                    Error(
-                      "alternative JSON round-trip mismatch\n  got: "
-                      <> string.inspect(round_trip_json)
-                      <> "\n  expected: "
-                      <> expected_list
-                      <> "\n  (while processing alternative JSON: "
-                      <> string.inspect(alt_json)
-                      <> ")",
-                    ),
-                  )
+                  list.Stop(Error(
+                    "alternative JSON round-trip mismatch\n  got: "
+                    <> string.inspect(round_trip_json)
+                    <> "\n  expected: "
+                    <> expected_list
+                    <> "\n  (while processing alternative JSON: "
+                    <> string.inspect(alt_json)
+                    <> ")",
+                  ))
                 }
               }
             }
@@ -544,14 +531,12 @@ fn verify_reserialize_value(
     list.fold_until(all_expected_jsons, Ok(Nil), fn(_, alt_json) {
       case typed_ev.from_json_keep(alt_json) {
         Error(e) ->
-          list.Stop(
-            Error(
-              e
-              <> "\n  (while processing expected JSON: "
-              <> string.inspect(alt_json)
-              <> ")",
-            ),
-          )
+          list.Stop(Error(
+            e
+            <> "\n  (while processing expected JSON: "
+            <> string.inspect(alt_json)
+            <> ")",
+          ))
         Ok(round_tripped) -> {
           let round_trip_json = round_tripped.to_dense_json()
           case list.contains(input.expected_dense_json, round_trip_json) {
@@ -560,17 +545,15 @@ fn verify_reserialize_value(
               let expected_list =
                 list.map(input.expected_dense_json, fn(s) { string.inspect(s) })
                 |> join_or
-              list.Stop(
-                Error(
-                  "expected JSON round-trip mismatch\n  got: "
-                  <> string.inspect(round_trip_json)
-                  <> "\n  expected: "
-                  <> expected_list
-                  <> "\n  (while processing expected JSON: "
-                  <> string.inspect(alt_json)
-                  <> ")",
-                ),
-              )
+              list.Stop(Error(
+                "expected JSON round-trip mismatch\n  got: "
+                <> string.inspect(round_trip_json)
+                <> "\n  expected: "
+                <> expected_list
+                <> "\n  (while processing expected JSON: "
+                <> string.inspect(alt_json)
+                <> ")",
+              ))
             }
           }
         }
@@ -586,14 +569,12 @@ fn verify_reserialize_value(
         Ok(alt_bytes) ->
           case typed_ev.from_bytes_drop(alt_bytes) {
             Error(e) ->
-              list.Stop(
-                Error(
-                  e
-                  <> "\n  (while processing alternative bytes: hex:"
-                  <> to_hex(alt_bytes)
-                  <> ")",
-                ),
-              )
+              list.Stop(Error(
+                e
+                <> "\n  (while processing alternative bytes: hex:"
+                <> to_hex(alt_bytes)
+                <> ")",
+              ))
             Ok(round_tripped) -> {
               let round_trip_bytes = round_tripped.to_bytes()
               case
@@ -604,21 +585,17 @@ fn verify_reserialize_value(
                 True -> list.Continue(Ok(Nil))
                 False -> {
                   let expected_hex =
-                    list.map(input.expected_bytes, fn(b) {
-                      "hex:" <> to_hex(b)
-                    })
+                    list.map(input.expected_bytes, fn(b) { "hex:" <> to_hex(b) })
                     |> join_or
-                  list.Stop(
-                    Error(
-                      "alternative bytes round-trip mismatch\n  got:      hex:"
-                      <> to_hex(round_trip_bytes)
-                      <> "\n  expected: "
-                      <> expected_hex
-                      <> "\n  (while processing alternative bytes: hex:"
-                      <> to_hex(alt_bytes)
-                      <> ")",
-                    ),
-                  )
+                  list.Stop(Error(
+                    "alternative bytes round-trip mismatch\n  got:      hex:"
+                    <> to_hex(round_trip_bytes)
+                    <> "\n  expected: "
+                    <> expected_hex
+                    <> "\n  (while processing alternative bytes: hex:"
+                    <> to_hex(alt_bytes)
+                    <> ")",
+                  ))
                 }
               }
             }
@@ -632,14 +609,12 @@ fn verify_reserialize_value(
     list.fold_until(input.expected_bytes, Ok(Nil), fn(_, alt_bytes) {
       case typed_ev.from_bytes_drop(alt_bytes) {
         Error(e) ->
-          list.Stop(
-            Error(
-              e
-              <> "\n  (while processing expected bytes: hex:"
-              <> to_hex(alt_bytes)
-              <> ")",
-            ),
-          )
+          list.Stop(Error(
+            e
+            <> "\n  (while processing expected bytes: hex:"
+            <> to_hex(alt_bytes)
+            <> ")",
+          ))
         Ok(round_tripped) -> {
           let round_trip_bytes = round_tripped.to_bytes()
           case
@@ -650,17 +625,15 @@ fn verify_reserialize_value(
               let expected_hex =
                 list.map(input.expected_bytes, fn(b) { "hex:" <> to_hex(b) })
                 |> join_or
-              list.Stop(
-                Error(
-                  "expected bytes round-trip mismatch\n  got:      hex:"
-                  <> to_hex(round_trip_bytes)
-                  <> "\n  expected: "
-                  <> expected_hex
-                  <> "\n  (while processing expected bytes: hex:"
-                  <> to_hex(alt_bytes)
-                  <> ")",
-                ),
-              )
+              list.Stop(Error(
+                "expected bytes round-trip mismatch\n  got:      hex:"
+                <> to_hex(round_trip_bytes)
+                <> "\n  expected: "
+                <> expected_hex
+                <> "\n  (while processing expected bytes: hex:"
+                <> to_hex(alt_bytes)
+                <> ")",
+              ))
             }
           }
         }
@@ -712,39 +685,41 @@ fn verify_reserialize_one(
 
   // Verify bytes
   let actual_bytes = ev.to_bytes()
-  use _ <- result.try(case
-    list.any(input.expected_bytes, fn(exp) { exp == actual_bytes })
-  {
-    True -> Ok(Nil)
-    False -> {
-      let expected_hex =
-        list.map(input.expected_bytes, fn(b) { "hex:" <> to_hex(b) })
-        |> join_or
-      Error(
-        "bytes not in expected set\n  actual:   hex:"
-        <> to_hex(actual_bytes)
-        <> "\n  expected: "
-        <> expected_hex,
-      )
-    }
-  })
+  use _ <- result.try(
+    case list.any(input.expected_bytes, fn(exp) { exp == actual_bytes }) {
+      True -> Ok(Nil)
+      False -> {
+        let expected_hex =
+          list.map(input.expected_bytes, fn(b) { "hex:" <> to_hex(b) })
+          |> join_or
+        Error(
+          "bytes not in expected set\n  actual:   hex:"
+          <> to_hex(actual_bytes)
+          <> "\n  expected: "
+          <> expected_hex,
+        )
+      }
+    },
+  )
 
   // Verify dense JSON
   let dense_json = ev.to_dense_json()
-  use _ <- result.try(case list.contains(input.expected_dense_json, dense_json) {
-    True -> Ok(Nil)
-    False -> {
-      let expected_list =
-        list.map(input.expected_dense_json, fn(s) { string.inspect(s) })
-        |> join_or
-      Error(
-        "dense JSON not in expected set\n  actual:   "
-        <> string.inspect(dense_json)
-        <> "\n  expected: "
-        <> expected_list,
-      )
-    }
-  })
+  use _ <- result.try(
+    case list.contains(input.expected_dense_json, dense_json) {
+      True -> Ok(Nil)
+      False -> {
+        let expected_list =
+          list.map(input.expected_dense_json, fn(s) { string.inspect(s) })
+          |> join_or
+        Error(
+          "dense JSON not in expected set\n  actual:   "
+          <> string.inspect(dense_json)
+          <> "\n  expected: "
+          <> expected_list,
+        )
+      }
+    },
+  )
 
   // Verify readable JSON
   let readable_json = ev.to_readable_json()
@@ -814,7 +789,8 @@ fn verify_reserialize_large_string(
   use _ <- result.try(case starts_with(bytes, prefix) {
     True -> Ok(Nil)
     False -> {
-      let shown_size = bit_array.byte_size(bytes) |> int.min(bit_array.byte_size(prefix) + 8)
+      let shown_size =
+        bit_array.byte_size(bytes) |> int.min(bit_array.byte_size(prefix) + 8)
       let shown = bit_array.slice(bytes, 0, shown_size) |> result.unwrap(<<>>)
       Error(
         "large string byte prefix mismatch\n  actual:          hex:"
@@ -896,7 +872,8 @@ fn verify_reserialize_large_array(
   use _ <- result.try(case starts_with(bytes, prefix) {
     True -> Ok(Nil)
     False -> {
-      let shown_size = bit_array.byte_size(bytes) |> int.min(bit_array.byte_size(prefix) + 8)
+      let shown_size =
+        bit_array.byte_size(bytes) |> int.min(bit_array.byte_size(prefix) + 8)
       let shown = bit_array.slice(bytes, 0, shown_size) |> result.unwrap(<<>>)
       Error(
         "large array byte prefix mismatch\n  actual:          hex:"
@@ -934,8 +911,7 @@ fn verify_enum_a_from_json_is_constant(
       keep_unrecognized_values: a.keep_unrecognized,
     )
   {
-    Error(e) ->
-      Error("enum_a_from_json_is_constant parse error: " <> e)
+    Error(e) -> Error("enum_a_from_json_is_constant parse error: " <> e)
     Ok(value) ->
       case value {
         goldens.EnumAA -> Ok(Nil)
@@ -960,8 +936,7 @@ fn verify_enum_a_from_bytes_is_constant(
       keep_unrecognized_values: a.keep_unrecognized,
     )
   {
-    Error(e) ->
-      Error("enum_a_from_bytes_is_constant parse error: " <> e)
+    Error(e) -> Error("enum_a_from_bytes_is_constant parse error: " <> e)
     Ok(value) ->
       case value {
         goldens.EnumAA -> Ok(Nil)
@@ -986,8 +961,7 @@ fn verify_enum_b_from_json_is_wrapper_b(
       keep_unrecognized_values: a.keep_unrecognized,
     )
   {
-    Error(e) ->
-      Error("enum_b_from_json_is_wrapper_b parse error: " <> e)
+    Error(e) -> Error("enum_b_from_json_is_wrapper_b parse error: " <> e)
     Ok(value) ->
       case value {
         goldens.EnumBB(v) if v == a.expected -> Ok(Nil)
@@ -1014,8 +988,7 @@ fn verify_enum_b_from_bytes_is_wrapper_b(
       keep_unrecognized_values: a.keep_unrecognized,
     )
   {
-    Error(e) ->
-      Error("enum_b_from_bytes_is_wrapper_b parse error: " <> e)
+    Error(e) -> Error("enum_b_from_bytes_is_wrapper_b parse error: " <> e)
     Ok(value) ->
       case value {
         goldens.EnumBB(v) if v == a.expected -> Ok(Nil)
