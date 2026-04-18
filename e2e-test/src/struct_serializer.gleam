@@ -102,51 +102,88 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
 }
 
 pub fn new_serializer(
-  name _name: String,
-  doc _doc: String,
+  name name: String,
+  qualified_name qualified_name: String,
+  module_path module_path: String,
+  doc doc: String,
   fields fields: List(FieldAdapter(s)),
   default default: s,
   get_unrecognized get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
   set_unrecognized set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) ->
     s,
+  removed_numbers removed_numbers: List(Int),
   recognized_slot_count recognized_slot_count: Int,
-  type_descriptor type_descriptor: fn() -> type_descriptor.TypeDescriptor,
 ) -> serializer.Serializer(s) {
   let fields = list.sort(fields, fn(a, b) { int.compare(a.number, b.number) })
-  serializer.make_serializer(serializer.make_type_adapter(
-    is_default: fn(s) { struct_is_default(fields, get_unrecognized, s) },
-    append_json: fn(s, tree, eol_indent) {
-      struct_append_json(
-        fields,
-        get_unrecognized,
-        recognized_slot_count,
-        s,
-        tree,
-        eol_indent,
-      )
-    },
-    decode_json: decode.dynamic
-      |> decode.then(fn(d) {
-        case struct_decode_json(fields, recognized_slot_count, d, default) {
-          Ok(s) -> decode.success(s)
-          Error(msg) -> decode.failure(default, msg)
-        }
-      }),
-    encode: fn(s, tree) {
-      struct_encode(fields, get_unrecognized, recognized_slot_count, s, tree)
-    },
-    decode: fn(bits, keep_unrecognized) {
-      struct_decode(
-        fields,
-        set_unrecognized,
-        recognized_slot_count,
-        bits,
-        default,
-        keep_unrecognized,
-      )
-    },
-    type_descriptor: type_descriptor,
-  ))
+  serializer.make_serializer(
+    serializer.make_type_adapter(
+      is_default: fn(s) { struct_is_default(fields, get_unrecognized, s) },
+      append_json: fn(s, tree, eol_indent) {
+        struct_append_json(
+          fields,
+          get_unrecognized,
+          recognized_slot_count,
+          s,
+          tree,
+          eol_indent,
+        )
+      },
+      decode_json: decode.dynamic
+        |> decode.then(fn(d) {
+          case struct_decode_json(fields, recognized_slot_count, d, default) {
+            Ok(s) -> decode.success(s)
+            Error(msg) -> decode.failure(default, msg)
+          }
+        }),
+      encode: fn(s, tree) {
+        struct_encode(fields, get_unrecognized, recognized_slot_count, s, tree)
+      },
+      decode: fn(bits, keep_unrecognized) {
+        struct_decode(
+          fields,
+          set_unrecognized,
+          recognized_slot_count,
+          bits,
+          default,
+          keep_unrecognized,
+        )
+      },
+      type_descriptor: fn() {
+        let id = module_path <> ":" <> qualified_name
+        let field_tds = list.map(fields, fn(f) { f.type_descriptor() })
+        let struct_fields =
+          list.map2(fields, field_tds, fn(f, ftd) {
+            type_descriptor.StructField(
+              name: f.name,
+              number: f.number,
+              field_type: ftd.type_sig,
+              doc: f.doc,
+            )
+          })
+        let all_records =
+          list.fold(field_tds, dict.new(), fn(acc, ftd) {
+            dict.merge(acc, ftd.records)
+          })
+        let struct_descriptor =
+          type_descriptor.StructDescriptor(
+            name: name,
+            qualified_name: qualified_name,
+            module_path: module_path,
+            doc: doc,
+            removed_numbers: removed_numbers,
+            fields: struct_fields,
+          )
+        type_descriptor.TypeDescriptor(
+          type_sig: type_descriptor.Record(id),
+          records: dict.insert(
+            all_records,
+            id,
+            type_descriptor.StructRecord(struct_descriptor),
+          ),
+        )
+      },
+    ),
+  )
 }
 
 // =============================================================================
@@ -173,7 +210,14 @@ fn struct_append_json(
   eol_indent: String,
 ) -> StringTree {
   case eol_indent {
-    "" -> append_dense_json(fields, get_unrecognized, recognized_slot_count, s, tree)
+    "" ->
+      append_dense_json(
+        fields,
+        get_unrecognized,
+        recognized_slot_count,
+        s,
+        tree,
+      )
     _ -> append_readable_json(fields, s, tree, eol_indent)
   }
 }
@@ -208,7 +252,11 @@ fn struct_encode(
       let vals = unrecognized.fields_data_values(u)
       case fmt == unrecognized.BinaryBytes && bit_array.byte_size(vals) > 0 {
         True -> {
-          #(unrecognized.fields_data_array_len(u), recognized_slot_count, Some(vals))
+          #(
+            unrecognized.fields_data_array_len(u),
+            recognized_slot_count,
+            Some(vals),
+          )
         }
         False -> {
           let c = get_slot_count(fields, s)
@@ -307,7 +355,8 @@ fn append_dense_json(
       let vals = unrecognized.fields_data_values(u)
       case fmt == unrecognized.DenseJson && bit_array.byte_size(vals) > 0 {
         True -> {
-          let tree = append_json_slots(fields, s, 0, recognized_slot_count, tree)
+          let tree =
+            append_json_slots(fields, s, 0, recognized_slot_count, tree)
           let extra_str = case bit_array.to_string(vals) {
             Ok(raw) ->
               raw
