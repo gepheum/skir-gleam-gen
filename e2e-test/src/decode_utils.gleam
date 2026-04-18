@@ -85,6 +85,8 @@ pub fn skip_value(bits: BitArray) -> Result(BitArray, String) {
             Error(e) -> Error(e)
             Ok(#(n, after_n)) -> skip_n_values(n, after_n)
           }
+        // Enum wrapper variants (251-254): skip the following payload value
+        251 | 252 | 253 | 254 -> skip_value(rest)
         255 -> Ok(rest)
         _ -> Ok(rest)
       }

@@ -1,8 +1,9 @@
 // TODO: keyed arrays
-//   Consider adding an index_all? And the find_ method will either do linerar search or indexed search
-// TODO: optimize decode for structs...
+// TODO: optimize decode and parse_dense_json for structs...
 // TODO: in the generated code, ask AI if some things are not optimal
+// TODO: signify that Serializer.adapter is for internal use...
 // TODO: fix all comments
+// TODO: use enum for UnrecognizedValues...
 
 import {
   type CodeGenerator,
@@ -370,6 +371,14 @@ class GleamSourceFileGenerator {
     const hasEnums = this.group.records.some(
       (r) => r.record.recordType === "enum",
     );
+    // Check if any enum has a recursive wrapper variant (needs type_descriptor).
+    const hasRecursiveEnumVariant = this.group.records.some(
+      (r) =>
+        r.record.recordType === "enum" &&
+        r.record.variants.some(
+          (v) => v.type?.kind === "record" && v.type.key === r.record.key,
+        ),
+    );
 
     this.push(`import gleam/option\n`);
     if (hasTimestamp) {
@@ -378,6 +387,8 @@ class GleamSourceFileGenerator {
     this.push(`import skir_client\n`);
     if (hasStructs) {
       this.push(`import struct_serializer\n`);
+    }
+    if (hasStructs || hasRecursiveEnumVariant) {
       this.push(`import type_descriptor\n`);
     }
     if (hasEnums) {
@@ -761,6 +772,10 @@ class GleamSourceFileGenerator {
         this.push(`),\n`);
       } else {
         // Wrapper variant.
+        // Detect direct self-reference (recursive enum variant).
+        const vType = variant.type!;
+        const isDirectSelfRef =
+          vType.kind === "record" && vType.key === record.record.key;
         this.push(`enum_serializer.wrapper_variant(\n`);
         this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
         this.push(`number: ${variant.number},\n`);
@@ -768,6 +783,13 @@ class GleamSourceFileGenerator {
         this.push(`serializer: fn() {\n`);
         this.push(`${typeSpeller.getSerializerExpression(variant.type)}\n`);
         this.push(`},\n`);
+        if (isDirectSelfRef) {
+          this.push(
+            `type_sig: option.Some(${typeSpeller.getTypeSignatureExpression(vType)}),\n`,
+          );
+        } else {
+          this.push(`type_sig: option.None,\n`);
+        }
         this.push(`wrap: fn(v) { ${ctorName}(v) },\n`);
         this.push(`unwrap: fn(e) { let assert ${ctorName}(v) = e\n v },\n`);
         this.push(`),\n`);

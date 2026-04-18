@@ -143,6 +143,18 @@ fn decode_number(bits: BitArray) -> Result(#(Int, BitArray), String) {
             <<v:size(64)-little-signed, r:bits>> -> Ok(#(v, r))
             _ -> Error("unexpected end of input")
           }
+        240 ->
+          // float32 wire: read 4 bytes, truncate to int
+          case rest {
+            <<v:float-size(32)-little, r:bits>> -> Ok(#(float.truncate(v), r))
+            _ -> Error("unexpected end of input")
+          }
+        241 ->
+          // float64 wire: read 8 bytes, truncate to int
+          case rest {
+            <<v:float-size(64)-little, r:bits>> -> Ok(#(float.truncate(v), r))
+            _ -> Error("unexpected end of input")
+          }
         _ -> Ok(#(0, rest))
       }
     _ -> Error("unexpected end of input")
@@ -937,19 +949,20 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
     decode_json: decode.optional(item.decode_json),
     encode: fn(v, acc) {
       case v {
-        None -> bytes_tree.append(acc, <<0>>)
+        None -> bytes_tree.append(acc, <<255>>)
         Some(x) -> item.encode(x, bytes_tree.append(acc, <<1>>))
       }
     },
     decode: fn(bits, strict) {
       case bits {
         <<0, rest:bits>> -> Ok(#(None, rest))
+        <<255, rest:bits>> -> Ok(#(None, rest))
         <<1, rest:bits>> ->
           case item.decode(rest, strict) {
             Ok(#(x, remaining)) -> Ok(#(Some(x), remaining))
             Error(e) -> Error(e)
           }
-        _ -> Error("expected 0 or 1 byte for optional tag")
+        _ -> Error("expected 0, 1, or 255 byte for optional tag")
       }
     },
     type_descriptor: fn() {
@@ -1004,13 +1017,13 @@ fn list_adapter(
     ]),
     encode: fn(v, acc) {
       let count = list_fold(v, 0, fn(n, _) { n + 1 })
-      let acc = bytes_tree.append(acc, encode_uint64(count))
+      let acc = bytes_tree.append(acc, encode_list_count(count))
       list_fold(v, acc, fn(bytes_acc, item_val) {
         item.encode(item_val, bytes_acc)
       })
     },
     decode: fn(bits, strict) {
-      case decode_number(bits) {
+      case decode_list_count(bits) {
         Error(e) -> Error(e)
         Ok(#(count, rest)) -> decode_list_items(item, count, rest, strict, [])
       }
@@ -1053,6 +1066,64 @@ fn list_fold(list: List(a), acc: b, f: fn(b, a) -> b) -> b {
 
 fn list_reverse(lst: List(a)) -> List(a) {
   list_fold(lst, [], fn(acc, x) { [x, ..acc] })
+}
+
+// Encodes a list count using the slot-count wire format:
+// 0 → 246, 1 → 247, 2 → 248, 3 → 249, n>3 → 250 + encode_uint32(n)
+fn encode_list_count(n: Int) -> BitArray {
+  case n {
+    0 -> <<246>>
+    1 -> <<247>>
+    2 -> <<248>>
+    3 -> <<249>>
+    _ -> bit_array.append(<<250>>, encode_uint32(n))
+  }
+}
+
+fn encode_uint32(n: Int) -> BitArray {
+  case n {
+    _ if n <= 231 -> <<n>>
+    _ if n <= 65_535 -> <<232, n:size(16)-little>>
+    _ -> <<233, n:size(32)-little>>
+  }
+}
+
+// Decodes a list count from the slot-count wire format (246-250) or legacy
+// uint64 format (0-234).
+fn decode_list_count(bits: BitArray) -> Result(#(Int, BitArray), String) {
+  case bits {
+    <<w, rest:bits>> ->
+      case w {
+        246 -> Ok(#(0, rest))
+        247 -> Ok(#(1, rest))
+        248 -> Ok(#(2, rest))
+        249 -> Ok(#(3, rest))
+        250 ->
+          case decode_number(rest) {
+            Error(e) -> Error(e)
+            Ok(#(n, rest2)) -> Ok(#(n, rest2))
+          }
+        // Legacy: 0-231 single byte count
+        _ if w <= 231 -> Ok(#(w, rest))
+        232 ->
+          case rest {
+            <<v:size(16)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input in decode_list_count")
+          }
+        233 ->
+          case rest {
+            <<v:size(32)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input in decode_list_count")
+          }
+        234 ->
+          case rest {
+            <<v:size(64)-little, r:bits>> -> Ok(#(v, r))
+            _ -> Error("unexpected end of input in decode_list_count")
+          }
+        _ -> Error("unexpected wire byte in decode_list_count: " <> int.to_string(w))
+      }
+    _ -> Error("unexpected end of input in decode_list_count")
+  }
 }
 
 fn decode_list_items(

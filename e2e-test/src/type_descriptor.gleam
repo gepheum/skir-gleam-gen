@@ -1,6 +1,7 @@
 import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
+import gleam/order
 import gleam/result
 import gleam/string
 
@@ -136,8 +137,20 @@ fn enum_record_id(e: EnumDescriptor) -> String {
 /// The format is compatible with the Go and Rust skir client implementations.
 pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
   let type_sig_json = type_signature_to_json(td.type_sig, "  ")
+  // Sort records: root type first (if it matches the top-level type sig),
+  // then others alphabetically.
+  let root_id = case td.type_sig {
+    Record(id) -> id
+    _ -> ""
+  }
   let records_sorted =
-    list.sort(dict.to_list(td.records), fn(a, b) { string.compare(a.0, b.0) })
+    list.sort(dict.to_list(td.records), fn(a, b) {
+      case a.0 == root_id, b.0 == root_id {
+        True, False -> order.Lt
+        False, True -> order.Gt
+        _, _ -> string.compare(a.0, b.0)
+      }
+    })
   let records_content = case records_sorted {
     [] -> ""
     _ -> {

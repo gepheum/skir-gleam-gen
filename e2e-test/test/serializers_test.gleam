@@ -1195,12 +1195,12 @@ pub fn optional_from_json_value_test() {
 // =============================================================================
 
 pub fn optional_encode_none_is_single_zero_byte_test() {
-  // "skir" prefix (4 bytes) + 0x00 for None
+  // "skir" prefix (4 bytes) + 0xFF for None
   skir_client.to_bytes(
     skir_client.optional_serializer(skir_client.int32_serializer()),
     None,
   )
-  |> should.equal(<<115, 107, 105, 114, 0>>)
+  |> should.equal(<<115, 107, 105, 114, 255>>)
 }
 
 pub fn optional_encode_some_starts_with_one_byte_test() {

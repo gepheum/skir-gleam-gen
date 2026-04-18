@@ -82,11 +82,17 @@ pub fn constant_variant(
 }
 
 /// Creates a `VariantAdapter` for a wrapper (payload-carrying) enum variant.
+///
+/// The optional `type_sig` parameter is used for recursive variant types to
+/// avoid infinite recursion when computing the type descriptor. When provided,
+/// the type descriptor for this variant returns `Some(TypeDescriptor(type_sig,
+/// {}))` directly instead of calling `serializer_fn().adapter.type_descriptor()`.
 pub fn wrapper_variant(
   name name: String,
   number number: Int,
   doc doc: String,
   serializer serializer_fn: fn() -> serializer.Serializer(v),
+  type_sig type_sig: Option(type_descriptor.TypeSignature),
   wrap wrap: fn(v) -> e,
   unwrap unwrap: fn(e) -> v,
 ) -> VariantAdapter(e) {
@@ -151,7 +157,16 @@ pub fn wrapper_variant(
         Error(_) -> None
       }
     },
-    type_descriptor: fn() { Some(serializer_fn().adapter.type_descriptor()) },
+    type_descriptor: fn() {
+      case type_sig {
+        None -> Some(serializer_fn().adapter.type_descriptor())
+        Some(sig) ->
+          Some(type_descriptor.TypeDescriptor(
+            type_sig: sig,
+            records: dict.new(),
+          ))
+      }
+    },
   )
 }
 
