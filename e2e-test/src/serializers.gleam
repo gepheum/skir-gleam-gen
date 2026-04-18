@@ -1120,7 +1120,10 @@ fn decode_list_count(bits: BitArray) -> Result(#(Int, BitArray), String) {
             <<v:size(64)-little, r:bits>> -> Ok(#(v, r))
             _ -> Error("unexpected end of input in decode_list_count")
           }
-        _ -> Error("unexpected wire byte in decode_list_count: " <> int.to_string(w))
+        _ ->
+          Error(
+            "unexpected wire byte in decode_list_count: " <> int.to_string(w),
+          )
       }
     _ -> Error("unexpected end of input in decode_list_count")
   }
