@@ -480,8 +480,8 @@ class GleamSourceFileGenerator {
         this.push(`${fieldName}: ${gleamType},\n`);
       }
     }
-    // Gleam labels cannot start with `_`, so we use `unrecognized` instead.
-    this.push(`unrecognized: unrecognized.UnrecognizedFields(${typeName}),\n`);
+    // Trailing underscore avoids conflict with user-defined fields named `unrecognized`.
+    this.push(`unrecognized_: unrecognized.UnrecognizedFields(${typeName}),\n`);
     this.push(")\n");
     this.push("}\n\n");
 
@@ -525,7 +525,7 @@ class GleamSourceFileGenerator {
         this.push(`${fieldName}: ${defExpr},\n`);
       }
     }
-    this.push(`unrecognized: option.None,\n`);
+    this.push(`unrecognized_: option.None,\n`);
     if (useConstDefault) {
       this.push(")\n\n");
     } else {
@@ -590,11 +590,11 @@ class GleamSourceFileGenerator {
     }
     this.push(`],\n`);
     this.push(`default: ${structDefaultExpr},\n`);
-    this.push(`get_unrecognized: fn(s) { s.unrecognized },\n`);
+    this.push(`get_unrecognized: fn(s) { s.unrecognized_ },\n`);
     const setUnrecognizedBody =
       struct.record.fields.length === 0
-        ? `${typeName}(unrecognized: u)`
-        : `${typeName}(..s, unrecognized: u)`;
+        ? `${typeName}(unrecognized_: u)`
+        : `${typeName}(..s, unrecognized_: u)`;
     this.push(
       `set_unrecognized: fn(s, u) { ${setUnrecognizedBody} },\n`,
     );
