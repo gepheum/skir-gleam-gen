@@ -109,24 +109,41 @@ pub fn new_serializer(
   get_unrecognized get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
   set_unrecognized set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) ->
     s,
+  recognized_slot_count recognized_slot_count: Int,
   type_descriptor type_descriptor: fn() -> type_descriptor.TypeDescriptor,
 ) -> serializer.Serializer(s) {
   let fields = list.sort(fields, fn(a, b) { int.compare(a.number, b.number) })
   serializer.make_serializer(serializer.make_type_adapter(
     is_default: fn(s) { struct_is_default(fields, get_unrecognized, s) },
     append_json: fn(s, tree, eol_indent) {
-      struct_append_json(fields, get_unrecognized, s, tree, eol_indent)
+      struct_append_json(
+        fields,
+        get_unrecognized,
+        recognized_slot_count,
+        s,
+        tree,
+        eol_indent,
+      )
     },
     decode_json: decode.dynamic
       |> decode.then(fn(d) {
-        case struct_decode_json(fields, d, default) {
+        case struct_decode_json(fields, recognized_slot_count, d, default) {
           Ok(s) -> decode.success(s)
           Error(msg) -> decode.failure(default, msg)
         }
       }),
-    encode: fn(s, tree) { struct_encode(fields, get_unrecognized, s, tree) },
+    encode: fn(s, tree) {
+      struct_encode(fields, get_unrecognized, recognized_slot_count, s, tree)
+    },
     decode: fn(bits, keep_unrecognized) {
-      struct_decode(fields, set_unrecognized, bits, default, keep_unrecognized)
+      struct_decode(
+        fields,
+        set_unrecognized,
+        recognized_slot_count,
+        bits,
+        default,
+        keep_unrecognized,
+      )
     },
     type_descriptor: type_descriptor,
   ))
@@ -150,23 +167,25 @@ fn struct_is_default(
 fn struct_append_json(
   fields: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  recognized_slot_count: Int,
   s: s,
   tree: StringTree,
   eol_indent: String,
 ) -> StringTree {
   case eol_indent {
-    "" -> append_dense_json(fields, get_unrecognized, s, tree)
+    "" -> append_dense_json(fields, get_unrecognized, recognized_slot_count, s, tree)
     _ -> append_readable_json(fields, s, tree, eol_indent)
   }
 }
 
 fn struct_decode_json(
   fields: List(FieldAdapter(s)),
+  recognized_slot_count: Int,
   d: dynamic.Dynamic,
   s: s,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> from_dense_json(fields, arr, s, False)
+    Ok(arr) -> from_dense_json(fields, recognized_slot_count, arr, s, False)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
         Ok(obj) -> from_readable_json(fields, obj, s)
@@ -178,6 +197,7 @@ fn struct_decode_json(
 fn struct_encode(
   fields: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  recognized_slot_count: Int,
   s: s,
   tree: BytesTree,
 ) -> BytesTree {
@@ -188,8 +208,7 @@ fn struct_encode(
       let vals = unrecognized.fields_data_values(u)
       case fmt == unrecognized.BinaryBytes && bit_array.byte_size(vals) > 0 {
         True -> {
-          let recognized = max_number_plus_one(fields)
-          #(unrecognized.fields_data_array_len(u), recognized, Some(vals))
+          #(unrecognized.fields_data_array_len(u), recognized_slot_count, Some(vals))
         }
         False -> {
           let c = get_slot_count(fields, s)
@@ -213,6 +232,7 @@ fn struct_encode(
 fn struct_decode(
   fields: List(FieldAdapter(s)),
   set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
+  recognized_slot_count: Int,
   bits: BitArray,
   s: s,
   keep_unrecognized: Bool,
@@ -225,8 +245,7 @@ fn struct_decode(
           case decode_slot_count(wire, rest) {
             Error(e) -> Error(e)
             Ok(#(slot_count, rest2)) -> {
-              let recognized_count = max_number_plus_one(fields)
-              let slots_to_fill = int.min(slot_count, recognized_count)
+              let slots_to_fill = int.min(slot_count, recognized_slot_count)
               case
                 decode_slots(
                   fields,
@@ -239,10 +258,10 @@ fn struct_decode(
               {
                 Error(e) -> Error(e)
                 Ok(#(s2, rest3)) -> {
-                  case slot_count > recognized_count {
+                  case slot_count > recognized_slot_count {
                     False -> Ok(#(s2, rest3))
                     True -> {
-                      let extra = slot_count - recognized_count
+                      let extra = slot_count - recognized_slot_count
                       case keep_unrecognized {
                         True ->
                           capture_unrecognized_bytes(
@@ -276,6 +295,7 @@ fn struct_decode(
 fn append_dense_json(
   fields: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  recognized_slot_count: Int,
   s: s,
   tree: StringTree,
 ) -> StringTree {
@@ -287,8 +307,7 @@ fn append_dense_json(
       let vals = unrecognized.fields_data_values(u)
       case fmt == unrecognized.DenseJson && bit_array.byte_size(vals) > 0 {
         True -> {
-          let recognized_count = max_number_plus_one(fields)
-          let tree = append_json_slots(fields, s, 0, recognized_count, tree)
+          let tree = append_json_slots(fields, s, 0, recognized_slot_count, tree)
           let extra_str = case bit_array.to_string(vals) {
             Ok(raw) ->
               raw
@@ -301,7 +320,7 @@ fn append_dense_json(
           case extra_str {
             "" -> tree
             _ -> {
-              let prefix = case recognized_count > 0 {
+              let prefix = case recognized_slot_count > 0 {
                 True -> ","
                 False -> ""
               }
@@ -370,11 +389,11 @@ fn append_json_slots(
         True -> string_tree.append(tree, ",")
         False -> tree
       }
-      let tree = case find_field_by_number(fields, i) {
-        Some(f) -> f.append_json(s, tree, "")
-        None -> string_tree.append(tree, "0")
+      let #(tree, next_fields) = case fields {
+        [f, ..rest] if f.number == i -> #(f.append_json(s, tree, ""), rest)
+        _ -> #(string_tree.append(tree, "0"), fields)
       }
-      append_json_slots(fields, s, i + 1, count, tree)
+      append_json_slots(next_fields, s, i + 1, count, tree)
     }
   }
 }
@@ -385,11 +404,12 @@ fn append_json_slots(
 
 fn from_dense_json(
   fields: List(FieldAdapter(s)),
+  recognized_slot_count: Int,
   arr: List(dynamic.Dynamic),
   s: s,
   _keep_unrecognized: Bool,
 ) -> Result(s, String) {
-  let num_to_fill = int.min(list.length(arr), max_number_plus_one(fields))
+  let num_to_fill = int.min(list.length(arr), recognized_slot_count)
   // fields are sorted by number; walk both lists linearly
   from_dense_json_loop(fields, arr, 0, num_to_fill, s)
 }
@@ -491,11 +511,11 @@ fn encode_slots_binary(
   case i >= count {
     True -> tree
     False -> {
-      let tree = case find_field_by_number(fields, i) {
-        Some(f) -> f.encode(s, tree)
-        None -> bytes_tree.append(tree, <<0>>)
+      let #(tree, next_fields) = case fields {
+        [f, ..rest] if f.number == i -> #(f.encode(s, tree), rest)
+        _ -> #(bytes_tree.append(tree, <<0>>), fields)
       }
-      encode_slots_binary(fields, s, i + 1, count, tree)
+      encode_slots_binary(next_fields, s, i + 1, count, tree)
     }
   }
 }
@@ -526,14 +546,21 @@ fn decode_slots(
   case i >= count {
     True -> Ok(#(s, bits))
     False ->
-      case find_field_by_number(fields, i) {
-        Some(f) ->
+      case fields {
+        [f, ..rest_fields] if f.number == i ->
           case f.decode(bits, s, keep_unrecognized) {
             Error(e) -> Error(e)
             Ok(#(new_s, rest)) ->
-              decode_slots(fields, new_s, i + 1, count, rest, keep_unrecognized)
+              decode_slots(
+                rest_fields,
+                new_s,
+                i + 1,
+                count,
+                rest,
+                keep_unrecognized,
+              )
           }
-        None ->
+        _ ->
           case decode_utils.skip_value(bits) {
             Error(e) -> Error(e)
             Ok(rest) ->
@@ -584,20 +611,6 @@ fn get_slot_count(fields: List(FieldAdapter(s)), s: s) -> Int {
       False -> int.max(max_so_far, f.number + 1)
     }
   })
-}
-
-fn max_number_plus_one(fields: List(FieldAdapter(s))) -> Int {
-  list.fold(fields, 0, fn(acc, f) { int.max(acc, f.number + 1) })
-}
-
-fn find_field_by_number(
-  fields: List(FieldAdapter(s)),
-  n: Int,
-) -> Option(FieldAdapter(s)) {
-  case list.find(fields, fn(f) { f.number == n }) {
-    Ok(f) -> Some(f)
-    Error(_) -> None
-  }
 }
 
 fn list_fold_result(
