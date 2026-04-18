@@ -13,15 +13,7 @@ import {
   convertCase,
 } from "skir-internal";
 import { z } from "zod";
-import {
-  getModuleDir,
-  getRecordFileSegment,
-  getTypeName,
-  segmentToGleamAlias,
-  segmentToGleamImportPath,
-  segmentToGleamPath,
-  toFieldName,
-} from "./naming.js";
+import { getModuleDir, getTypeName, toFieldName } from "./naming.js";
 import { TypeSpeller } from "./type_speller.js";
 
 const Config = z.strictObject({});
@@ -29,9 +21,7 @@ const Config = z.strictObject({});
 type Config = z.infer<typeof Config>;
 
 /**
- * Information about a group of records that will be co-located in one Gleam
- * source file. Single-record groups are the common case; multi-record groups
- * arise when records are mutually recursive (Gleam prohibits import cycles).
+ * Information about the Gleam source file generated for one Skir module.
  */
 interface GroupInfo {
   /** Records in this group (sorted in original declaration order). */
@@ -54,10 +44,11 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
     const { recordMap } = input;
     const outputFiles: CodeGenerator.OutputFile[] = [];
 
-    // First pass: compute groups for every module and build a global map from
-    // RecordKey to the GroupInfo that contains it.
+    // First pass: compute groups and name maps for every module.
     const keyToGroup = new Map<RecordKey, GroupInfo>();
     const allGroups: GroupInfo[] = [];
+    const uniqueTypeNames = new Map<RecordKey, string>();
+    const allCtorNames = new Map<string, string>();
     for (const module of input.modules) {
       const groups = computeGroupsForModule(module.records);
       for (const group of groups) {
@@ -66,15 +57,9 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
           keyToGroup.set(key, group);
         }
       }
-    }
-
-    // Compute unique Gleam type names for all records (needed when multiple
-    // records in the same group share the same short name).
-    const uniqueTypeNames = new Map<RecordKey, string>();
-    for (const group of allGroups) {
-      for (const rec of group.records) {
-        uniqueTypeNames.set(rec.record.key, computeUniqueTypeName(rec, group));
-      }
+      const { typeNames, ctorNames } = computeModuleNames(module.records);
+      for (const [k, v] of typeNames) uniqueTypeNames.set(k, v);
+      for (const [k, v] of ctorNames) allCtorNames.set(k, v);
     }
 
     // Second pass: generate code for each group.
@@ -86,6 +71,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
           recordMap,
           keyToGroup,
           uniqueTypeNames,
+          allCtorNames,
         ).generate(),
       });
     }
@@ -95,97 +81,23 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
 }
 
 /**
- * Groups records from (a single .skir module) so that mutually recursive
- * records — which would create import cycles if placed in separate Gleam
- * modules — end up in the same file.
+ * Returns a single GroupInfo containing all records from the given Skir module.
+ * All types from one .skir file are co-located in one Gleam module.
  */
 function computeGroupsForModule(
   records: readonly RecordLocation[],
 ): GroupInfo[] {
   if (records.length === 0) return [];
-
-  const moduleKeys = new Set(records.map((r) => r.record.key));
-
-  // --- Step 1: build direct within-module dependency graph ---
-  const deps = new Map<RecordKey, Set<RecordKey>>();
-  for (const rec of records) {
-    const directDeps = new Set<RecordKey>();
-    const visit = (type: ResolvedType): void => {
-      switch (type.kind) {
-        case "record":
-          if (moduleKeys.has(type.key) && type.key !== rec.record.key) {
-            directDeps.add(type.key);
-          }
-          break;
-        case "array":
-          visit(type.item);
-          break;
-        case "optional":
-          visit(type.other);
-          break;
-      }
-    };
-    for (const field of rec.record.fields) {
-      if (field.type) visit(field.type);
-    }
-    deps.set(rec.record.key, directDeps);
-  }
-
-  // --- Step 2: compute transitive closure ---
-  const reach = new Map<RecordKey, Set<RecordKey>>(
-    [...deps.entries()].map(([k, v]) => [k, new Set(v)]),
-  );
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [a, aReach] of reach) {
-      for (const b of [...aReach]) {
-        for (const c of reach.get(b) ?? []) {
-          if (!aReach.has(c)) {
-            aReach.add(c);
-            changed = true;
-          }
-        }
-      }
-    }
-  }
-
-  // --- Step 3: group by mutual reachability (SCC) ---
-  const assigned = new Set<RecordKey>();
-  const groups: GroupInfo[] = [];
-
-  for (const rec of records) {
-    const key = rec.record.key;
-    if (assigned.has(key)) continue;
-
-    const groupRecords: RecordLocation[] = [rec];
-    assigned.add(key);
-
-    const aReach = reach.get(key) ?? new Set<RecordKey>();
-    for (const other of records) {
-      const otherKey = other.record.key;
-      if (assigned.has(otherKey)) continue;
-      const otherReach = reach.get(otherKey) ?? new Set<RecordKey>();
-      if (aReach.has(otherKey) && otherReach.has(key)) {
-        groupRecords.push(other);
-        assigned.add(otherKey);
-      }
-    }
-
-    const modulePath = rec.modulePath;
-    const moduleDir = getModuleDir(modulePath);
-    const segment = groupRecords.map(getRecordFileSegment).sort().join("__");
-
-    groups.push({
-      records: groupRecords,
-      outputPath: segmentToGleamPath(moduleDir, segment),
-      importPath: segmentToGleamImportPath(moduleDir, segment),
-      alias: segmentToGleamAlias(moduleDir, segment),
-      keySet: new Set(groupRecords.map((r) => r.record.key)),
-    });
-  }
-
-  return groups;
+  const moduleDir = getModuleDir(records[0]!.modulePath);
+  return [
+    {
+      records: [...records],
+      outputPath: `${moduleDir}.gleam`,
+      importPath: `skirout/${moduleDir}`,
+      alias: moduleDir.replace(/\//g, "__") + "_",
+      keySet: new Set(records.map((r) => r.record.key)),
+    },
+  ];
 }
 
 /**
@@ -244,25 +156,97 @@ function computeConstDefaultKeys(
 }
 
 /**
- * Returns the Gleam type name for a record within its group. If multiple
- * records in the same group share the same short name (e.g. three levels of
- * nested `Foo`), we fall back to the full ancestor path in UpperCamel to
- * guarantee uniqueness within the generated Gleam module.
+ * Computes unique Gleam names for all types and variant constructors in a
+ * single Skir module using BFS depth-order processing with "X" collision
+ * avoidance. Both type names and constructor names share the same collision
+ * namespace to avoid any ambiguity.
+ *
+ * Returns:
+ * - typeNames: RecordKey → Gleam type name (UpperCamel)
+ * - ctorNames: "${recordKey}:${variantText}" → Gleam constructor name
+ *   (use "__unknown__" as the variant text for the implicit Unknown constructor)
  */
-function computeUniqueTypeName(
-  record: RecordLocation,
-  group: GroupInfo,
-): string {
-  const shortName = getTypeName(record);
-  const hasCollision = group.records.some(
-    (r) => r.record.key !== record.record.key && getTypeName(r) === shortName,
-  );
-  if (hasCollision) {
-    return record.recordAncestors
-      .map((a) => convertCase(a.name.text, "UpperCamel"))
-      .join("");
+function computeModuleNames(records: readonly RecordLocation[]): {
+  typeNames: Map<RecordKey, string>;
+  ctorNames: Map<string, string>;
+} {
+  const taken = new Set<string>();
+  const typeNames = new Map<RecordKey, string>();
+  const ctorNames = new Map<string, string>();
+
+  if (records.length === 0) return { typeNames, ctorNames };
+
+  // Build a lookup from ancestor-path string → record key.
+  const pathToKey = new Map<string, RecordKey>();
+  for (const rec of records) {
+    const path = rec.recordAncestors.map((a) => a.name.text).join("\0");
+    pathToKey.set(path, rec.record.key);
   }
-  return shortName;
+
+  const parentKeyOf = (rec: RecordLocation): RecordKey | undefined => {
+    if (rec.recordAncestors.length <= 1) return undefined;
+    const parentPath = rec.recordAncestors
+      .slice(0, -1)
+      .map((a) => a.name.text)
+      .join("\0");
+    return pathToKey.get(parentPath);
+  };
+
+  // Group records by depth (0 = top-level).
+  const byDepth: RecordLocation[][] = [];
+  for (const rec of records) {
+    const depth = rec.recordAncestors.length - 1;
+    while (byDepth.length <= depth) byDepth.push([]);
+    byDepth[depth]!.push(rec);
+  }
+
+  // Assign a unique name, appending "X" until there is no collision.
+  const assign = (candidate: string): string => {
+    while (taken.has(candidate)) candidate += "X";
+    taken.add(candidate);
+    return candidate;
+  };
+
+  // Process each depth level. At depth N we assign:
+  //   - type names for depth-N records
+  //   - constructor names for variants of depth-(N-1) enums
+  // We run one extra iteration (depth == byDepth.length) to process
+  // variant constructors of the deepest enums.
+  for (let depth = 0; depth <= byDepth.length; depth++) {
+    // Assign type names for records at this depth.
+    for (const rec of byDepth[depth] ?? []) {
+      const ownName = convertCase(
+        rec.recordAncestors.at(-1)!.name.text,
+        "UpperCamel",
+      );
+      const pk = parentKeyOf(rec);
+      const parentName = pk !== undefined ? (typeNames.get(pk) ?? "") : "";
+      typeNames.set(rec.record.key, assign(parentName + ownName));
+    }
+
+    // Assign constructor names for variants of depth-(depth-1) enums.
+    if (depth > 0) {
+      for (const rec of byDepth[depth - 1] ?? []) {
+        if (rec.record.recordType !== "enum") continue;
+        const typeName = typeNames.get(rec.record.key)!;
+        // Implicit Unknown constructor.
+        ctorNames.set(
+          `${rec.record.key}:__unknown__`,
+          assign(typeName + "Unknown"),
+        );
+        // User-defined variant constructors.
+        for (const variant of rec.record.fields) {
+          const variantPart = convertCase(variant.name.text, "UpperCamel");
+          ctorNames.set(
+            `${rec.record.key}:${variant.name.text}`,
+            assign(typeName + variantPart),
+          );
+        }
+      }
+    }
+  }
+
+  return { typeNames, ctorNames };
 }
 
 // Generates the code for one Gleam source file (one GroupInfo → one file).
@@ -276,19 +260,21 @@ class GleamSourceFileGenerator {
     recordMap: ReadonlyMap<RecordKey, RecordLocation>,
     private readonly keyToGroup: ReadonlyMap<RecordKey, GroupInfo>,
     private readonly uniqueTypeNames: ReadonlyMap<RecordKey, string>,
+    private readonly ctorNames: ReadonlyMap<string, string>,
   ) {
     // Returns the unique Gleam type name for a given record key.
     const uniqueNameFor = (key: RecordKey): string => {
       return uniqueTypeNames.get(key) ?? getTypeName(recordMap.get(key)!);
     };
 
-    // Compute the default and serializer function name for a given record key.
-    // Single-record files use simple "default"/"serializer"; multi-record files
-    // prefix with the snake_case unique type name to avoid duplicate definitions.
+    // Compute the function name for a given record key and base name.
+    // The prefix is the full ancestor path in lower_underscore joined by "__".
     const fnNameFor = (key: RecordKey, base: string): string => {
-      const g = keyToGroup.get(key)!;
-      if (g.records.length === 1) return base;
-      return `${convertCase(uniqueNameFor(key), "lower_underscore")}_${base}`;
+      const rec = recordMap.get(key)!;
+      const prefix = rec.recordAncestors
+        .map((a) => convertCase(a.name.text, "lower_underscore"))
+        .join("__");
+      return `${prefix}_${base}`;
     };
 
     const typeExprFor = (key: RecordKey): string => {
@@ -443,12 +429,10 @@ class GleamSourceFileGenerator {
     const { typeSpeller } = this;
     const typeName =
       this.uniqueTypeNames.get(struct.record.key) ?? getTypeName(struct);
-    // In a multi-record file (mutual recursion), prefix function names with
-    // the snake_case type name so each type has uniquely named functions.
     const fnPrefix =
-      this.group.records.length === 1
-        ? ""
-        : `${convertCase(typeName, "lower_underscore")}_`;
+      struct.recordAncestors
+        .map((a) => convertCase(a.name.text, "lower_underscore"))
+        .join("__") + "_";
     // Sort fields by name for consistent output.
     const fields = [...struct.record.fields].sort((a, b) =>
       a.name.text.localeCompare(b.name.text),
@@ -545,7 +529,7 @@ class GleamSourceFileGenerator {
       const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
       const fieldType = typeSpeller.getGleamType(field.type!);
-      this.push(`fn ${fnPrefix}field_spec_${fieldName}() {\n`);
+      this.push(`fn ${fnPrefix}field_spec_${fieldName}_() {\n`);
       this.push(`struct_serializer.FieldSpec(\n`);
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
@@ -564,7 +548,9 @@ class GleamSourceFileGenerator {
       this.push(`serializer: fn() {\n`);
       this.push(`${typeSpeller.getSerializerExpression(field.type!)}\n`);
       this.push(`},\n`);
-      this.push(`recursive: ${isRecursive ? "struct_serializer.Recursive" : "struct_serializer.NotRecursive"},\n`);
+      this.push(
+        `recursive: ${isRecursive ? "struct_serializer.Recursive" : "struct_serializer.NotRecursive"},\n`,
+      );
       this.push(`)\n`);
       this.push(`}\n\n`);
     }
@@ -585,7 +571,7 @@ class GleamSourceFileGenerator {
     for (const field of fieldsByNumber) {
       const fieldName = toFieldName(field.name.text);
       this.push(
-        `struct_serializer.field_spec_to_field_adapter(${fnPrefix}field_spec_${fieldName}()),\n`,
+        `struct_serializer.field_spec_to_field_adapter(${fnPrefix}field_spec_${fieldName}_()),\n`,
       );
     }
     this.push(`],\n`);
@@ -595,9 +581,7 @@ class GleamSourceFileGenerator {
       struct.record.fields.length === 0
         ? `${typeName}(unrecognized_: u)`
         : `${typeName}(..s, unrecognized_: u)`;
-    this.push(
-      `set_unrecognized: fn(s, u) { ${setUnrecognizedBody} },\n`,
-    );
+    this.push(`set_unrecognized: fn(s, u) { ${setUnrecognizedBody} },\n`);
     this.push(
       `removed_numbers: [${struct.record.removedNumbers.join(", ")}],\n`,
     );
@@ -613,13 +597,12 @@ class GleamSourceFileGenerator {
     const typeName =
       this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
     const fnPrefix =
-      this.group.records.length === 1
-        ? ""
-        : `${convertCase(typeName, "lower_underscore")}_`;
-    // When multiple enums share a Gleam file (mutual recursion), constructor
-    // names must be prefixed with the type name because Gleam requires all
-    // constructor names to be unique within a module.
-    const ctorPrefix = this.group.records.length === 1 ? "" : typeName;
+      record.recordAncestors
+        .map((a) => convertCase(a.name.text, "lower_underscore"))
+        .join("__") + "_";
+    const unknownCtorName =
+      this.ctorNames.get(`${record.record.key}:__unknown__`) ??
+      typeName + "Unknown";
     const variants = record.record.fields;
 
     this.pushSeparator(
@@ -634,11 +617,12 @@ class GleamSourceFileGenerator {
     // user-defined variant named "unknown"; this is documented as reserved.
     this.push(`pub type ${typeName} {\n`);
     this.push(
-      `${ctorPrefix}Unknown(unrecognized.UnrecognizedVariant(${typeName}))\n`,
+      `${unknownCtorName}(unrecognized.UnrecognizedVariant(${typeName}))\n`,
     );
     for (const variant of variants) {
       const ctorName =
-        ctorPrefix + convertCase(variant.name.text, "UpperCamel");
+        this.ctorNames.get(`${record.record.key}:${variant.name.text}`) ??
+        typeName + convertCase(variant.name.text, "UpperCamel");
       this.push(commentify(docToCommentText(variant.doc)));
       if (variant.type) {
         const gleamType = typeSpeller.getGleamType(variant.type);
@@ -652,7 +636,7 @@ class GleamSourceFileGenerator {
     // Default const — an enum defaults to the Unknown variant.
     this.push(`/// The default \`${typeName}\` (the unknown variant).\n`);
     this.push(
-      `pub const ${fnPrefix}default = ${ctorPrefix}Unknown(option.None)\n\n`,
+      `pub const ${fnPrefix}default = ${unknownCtorName}(option.None)\n\n`,
     );
 
     // Serializer stub.
