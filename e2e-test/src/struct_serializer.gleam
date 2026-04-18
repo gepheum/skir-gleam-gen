@@ -111,6 +111,7 @@ pub fn new_serializer(
     s,
   type_descriptor type_descriptor: fn() -> type_descriptor.TypeDescriptor,
 ) -> serializer.Serializer(s) {
+  let fields = list.sort(fields, fn(a, b) { int.compare(a.number, b.number) })
   serializer.make_serializer(serializer.make_type_adapter(
     is_default: fn(s) { struct_is_default(fields, get_unrecognized, s) },
     append_json: fn(s, tree, eol_indent) {
@@ -388,19 +389,58 @@ fn from_dense_json(
   s: s,
   _keep_unrecognized: Bool,
 ) -> Result(s, String) {
-  let total_items = list.length(arr)
-  let recognized_count = max_number_plus_one(fields)
-  let num_to_fill = int.min(total_items, recognized_count)
-  list_fold_result(fields, s, fn(acc, f) {
-    case f.number < num_to_fill {
-      False -> Ok(acc)
-      True ->
-        case list_at(arr, f.number) {
-          None -> Ok(acc)
-          Some(elem) -> f.decode_json(elem, acc)
+  let num_to_fill = int.min(list.length(arr), max_number_plus_one(fields))
+  // fields are sorted by number; walk both lists linearly
+  from_dense_json_loop(fields, arr, 0, num_to_fill, s)
+}
+
+fn from_dense_json_loop(
+  fields: List(FieldAdapter(s)),
+  arr: List(dynamic.Dynamic),
+  pos: Int,
+  limit: Int,
+  s: s,
+) -> Result(s, String) {
+  case fields {
+    [] -> Ok(s)
+    [f, ..rest_fields] ->
+      case f.number >= limit {
+        True -> Ok(s)
+        False -> {
+          let #(elem_opt, arr_rest, new_pos) = advance_to(arr, pos, f.number)
+          case elem_opt {
+            None -> Ok(s)
+            Some(elem) ->
+              case f.decode_json(elem, s) {
+                Error(e) -> Error(e)
+                Ok(new_s) ->
+                  from_dense_json_loop(
+                    rest_fields,
+                    arr_rest,
+                    new_pos,
+                    limit,
+                    new_s,
+                  )
+              }
+          }
         }
-    }
-  })
+      }
+  }
+}
+
+fn advance_to(lst: List(a), pos: Int, target: Int) -> #(Option(a), List(a), Int) {
+  case pos >= target {
+    True ->
+      case lst {
+        [] -> #(None, [], pos)
+        [first, ..rest] -> #(Some(first), rest, pos + 1)
+      }
+    False ->
+      case lst {
+        [] -> #(None, [], pos)
+        [_, ..rest] -> advance_to(rest, pos + 1, target)
+      }
+  }
 }
 
 fn from_readable_json(
@@ -571,17 +611,6 @@ fn list_fold_result(
       case f(acc, first) {
         Error(e) -> Error(e)
         Ok(new_acc) -> list_fold_result(rest, new_acc, f)
-      }
-  }
-}
-
-fn list_at(lst: List(a), i: Int) -> Option(a) {
-  case lst {
-    [] -> None
-    [first, ..rest] ->
-      case i {
-        0 -> Some(first)
-        _ -> list_at(rest, i - 1)
       }
   }
 }
