@@ -1,10 +1,12 @@
-// TODO: Instead of ${enumName}_default, it should be weekday_unknown
-// TODO: golden tests...
 // TODO: keyed arrays
+//   Consider adding an index_all? And the find_ method will either do linerar search or indexed search
+// TODO: optimize decode for structs...
+// TODO: in the generated code, ask AI if some things are not optimal
 // TODO: fix all comments
 
 import {
   type CodeGenerator,
+  type Constant,
   type Doc,
   type RecordKey,
   type RecordLocation,
@@ -25,6 +27,8 @@ type Config = z.infer<typeof Config>;
 interface GroupInfo {
   /** Records in this group (sorted in original declaration order). */
   records: readonly RecordLocation[];
+  /** Constants declared at the top-level of the corresponding Skir module. */
+  constants: readonly Constant<false>[];
   /** Output file path relative to outDir, e.g. "gepheum/foo/bar__baz.gleam". */
   outputPath: string;
   /** Gleam import path, e.g. "skirout/gepheum/foo/bar__baz". */
@@ -49,7 +53,11 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
     const uniqueTypeNames = new Map<RecordKey, string>();
     const allCtorNames = new Map<string, string>();
     for (const module of input.modules) {
-      const groups = computeGroupsForModule(module.records);
+      const groups = computeGroupsForModule(
+        module.records,
+        module.constants as readonly Constant<false>[],
+        module.path,
+      );
       for (const group of groups) {
         allGroups.push(group);
         for (const key of group.keySet) {
@@ -85,12 +93,22 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
  */
 function computeGroupsForModule(
   records: readonly RecordLocation[],
+  constants: readonly Constant<false>[] = [],
+  modulePath?: string,
 ): GroupInfo[] {
-  if (records.length === 0) return [];
-  const moduleDir = getModuleDir(records[0]!.modulePath);
+  if (records.length === 0 && constants.length === 0) return [];
+  let moduleDir: string;
+  if (records.length > 0) {
+    moduleDir = getModuleDir(records[0]!.modulePath);
+  } else if (modulePath) {
+    moduleDir = getModuleDir(modulePath);
+  } else {
+    return [];
+  }
   return [
     {
       records: [...records],
+      constants: [...constants],
       outputPath: `${moduleDir}.gleam`,
       importPath: `skirout/${moduleDir}`,
       alias: moduleDir.replace(/\//g, "__") + "_",
@@ -338,6 +356,8 @@ class GleamSourceFileGenerator {
       }
     }
 
+    this.writeConstants();
+
     return this.joinLinesAndFixFormatting();
   }
 
@@ -405,6 +425,9 @@ class GleamSourceFileGenerator {
         if (field.type) visit(field.type);
       }
     }
+    for (const constant of this.group.constants) {
+      if (constant.type) visit(constant.type);
+    }
     return result;
   }
 
@@ -429,7 +452,41 @@ class GleamSourceFileGenerator {
         if (field.type && check(field.type)) return true;
       }
     }
+    for (const constant of this.group.constants) {
+      if (constant.type && check(constant.type)) return true;
+    }
     return false;
+  }
+
+  private writeConstants(): void {
+    for (const constant of this.group.constants) {
+      if (!constant.type || constant.valueAsDenseJson === undefined) continue;
+      const fnName = convertCase(constant.name.text, "lower_underscore");
+      const gleamType = this.typeSpeller.getGleamType(constant.type);
+      const serializerExpr = this.typeSpeller.getSerializerExpression(
+        constant.type,
+      );
+      const jsonStr = JSON.stringify(JSON.stringify(constant.valueAsDenseJson));
+      const doc = commentify(docToCommentText(constant.doc));
+      if (doc) this.push(doc);
+      this.push(
+        `pub fn ${fnName}() -> ${gleamType} {
+` +
+          `let assert Ok(v) = skir_client.from_json(
+` +
+          `${serializerExpr},
+` +
+          `${jsonStr},
+` +
+          `)
+` +
+          `v
+` +
+          `}
+
+`,
+      );
+    }
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
