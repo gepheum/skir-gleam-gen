@@ -108,7 +108,12 @@ pub fn from_json_with_options(
   json: String,
   keep_unrecognized_values keep_unrecognized_values: Bool,
 ) -> Result(a, String) {
-  case json.parse(from: json, using: serializer.adapter.decode_json(keep_unrecognized_values)) {
+  case
+    json.parse(
+      from: json,
+      using: serializer.adapter.decode_json(keep_unrecognized_values),
+    )
+  {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -148,7 +153,9 @@ pub fn from_bytes_with_options(
     _ ->
       case bit_array.to_string(bytes) {
         Ok(s) ->
-          case json.parse(from: s, using: serializer.adapter.decode_json(False)) {
+          case
+            json.parse(from: s, using: serializer.adapter.decode_json(False))
+          {
             Ok(v) -> Ok(v)
             Error(e) -> Error(json_decode_error_to_string(e))
           }
