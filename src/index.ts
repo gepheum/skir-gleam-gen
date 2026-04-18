@@ -1,7 +1,6 @@
-// TODO: I think to solve the heavy computation done during recursive serializer, I can instead have Serializer be a sum type: SerializerRecursive SerializerNonRecursive. SerializerRecursive would contain a function returning the type adapter.
-// TODO: type descriptors cannot be recursive...
-// TODO: remove the list_at
-// TODO: optimize decode_struct, ...
+// TODO: Instead of ${enumName}_default, it should be weekday_unknown
+// TODO: golden tests...
+// TODO: keyed arrays
 // TODO: fix all comments
 
 import {
@@ -287,7 +286,9 @@ class GleamSourceFileGenerator {
     this.constDefaultKeys = constDefaultKeys;
 
     const defaultExprFor = (key: RecordKey): string => {
-      const name = fnNameFor(key, "default");
+      const rec = recordMap.get(key)!;
+      const baseName = rec.record.recordType === "enum" ? "unknown" : "default";
+      const name = fnNameFor(key, baseName);
       const isConst = constDefaultKeys.has(key);
       if (group.keySet.has(key)) return isConst ? name : `${name}()`;
       const alias = keyToGroup.get(key)!.alias;
@@ -346,6 +347,9 @@ class GleamSourceFileGenerator {
     const hasStructs = this.group.records.some(
       (r) => r.record.recordType === "struct",
     );
+    const hasEnums = this.group.records.some(
+      (r) => r.record.recordType === "enum",
+    );
 
     this.push(`import gleam/option\n`);
     if (hasTimestamp) {
@@ -354,6 +358,9 @@ class GleamSourceFileGenerator {
     this.push(`import skir_client\n`);
     if (hasStructs) {
       this.push(`import struct_serializer\n`);
+    }
+    if (hasEnums) {
+      this.push(`import enum_serializer\n`);
     }
     this.push(`import unrecognized\n`);
 
@@ -518,10 +525,10 @@ class GleamSourceFileGenerator {
     }
 
     // `new` constructor function.
-    this.push(`/// Creates a new \`${typeName}\` with the given field values.\n`);
     this.push(
-      `pub fn ${fnPrefix}new(\n`,
+      `/// Creates a new \`${typeName}\` with the given field values.\n`,
     );
+    this.push(`pub fn ${fnPrefix}new(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
@@ -570,7 +577,9 @@ class GleamSourceFileGenerator {
       const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
       const fieldType = typeSpeller.getGleamType(field.type!);
-      this.push(`struct_serializer.field_spec_to_field_adapter(struct_serializer.FieldSpec(\n`);
+      this.push(
+        `struct_serializer.field_spec_to_field_adapter(struct_serializer.FieldSpec(\n`,
+      );
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
@@ -600,7 +609,10 @@ class GleamSourceFileGenerator {
       struct.record.fields.length === 0
         ? `${typeName}(unrecognized_: u)`
         : `${typeName}(..s, unrecognized_: u)`;
-    this.push(`set_unrecognized: fn(s, u) { ${setUnrecognizedBody} },\n`);
+    const setUnrecognizedArg = struct.record.fields.length === 0 ? `_s` : `s`;
+    this.push(
+      `set_unrecognized: fn(${setUnrecognizedArg}, u) { ${setUnrecognizedBody} },\n`,
+    );
     this.push(
       `removed_numbers: [${struct.record.removedNumbers.join(", ")}],\n`,
     );
@@ -655,15 +667,76 @@ class GleamSourceFileGenerator {
     // Default const — an enum defaults to the Unknown variant.
     this.push(`/// The default \`${typeName}\` (the unknown variant).\n`);
     this.push(
-      `pub const ${fnPrefix}default = ${unknownCtorName}(option.None)\n\n`,
+      `pub const ${fnPrefix}unknown = ${unknownCtorName}(option.None)\n\n`,
     );
 
-    // Serializer stub.
+    // Serializer.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
       `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
     );
-    this.push(`todo\n`);
+    this.push(`enum_serializer.new_serializer(\n`);
+    this.push(`name: ${JSON.stringify(record.record.name.text)},\n`);
+    this.push(
+      `qualified_name: ${JSON.stringify(record.recordAncestors.map((r) => r.name.text).join("."))},\n`,
+    );
+    this.push(`module_path: ${JSON.stringify(record.modulePath)},\n`);
+    this.push(`doc: ${JSON.stringify(docToCommentText(record.record.doc))},\n`);
+    this.push(`variants: [\n`);
+    for (const [i, variant] of variants.entries()) {
+      const ctorName =
+        this.ctorNames.get(`${record.record.key}:${variant.name.text}`) ??
+        typeName + convertCase(variant.name.text, "UpperCamel");
+      if (!variant.type) {
+        // Constant variant.
+        this.push(`enum_serializer.constant_variant(\n`);
+        this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
+        this.push(`number: ${variant.number},\n`);
+        this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
+        this.push(`instance: ${ctorName},\n`);
+        this.push(`),\n`);
+      } else {
+        // Wrapper variant.
+        this.push(`enum_serializer.wrapper_variant(\n`);
+        this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
+        this.push(`number: ${variant.number},\n`);
+        this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
+        this.push(`serializer: fn() {\n`);
+        this.push(`${typeSpeller.getSerializerExpression(variant.type)}\n`);
+        this.push(`},\n`);
+        this.push(`wrap: fn(v) { ${ctorName}(v) },\n`);
+        this.push(`unwrap: fn(e) { let assert ${ctorName}(v) = e\n v },\n`);
+        this.push(`),\n`);
+      }
+      void i;
+    }
+    this.push(`],\n`);
+    this.push(`unknown_default: ${fnPrefix}unknown,\n`);
+    this.push(`get_kind_ordinal: fn(e) {\n`);
+    this.push(`case e {\n`);
+    this.push(`${unknownCtorName}(_) -> 0\n`);
+    for (const [i, variant] of variants.entries()) {
+      const ctorName =
+        this.ctorNames.get(`${record.record.key}:${variant.name.text}`) ??
+        typeName + convertCase(variant.name.text, "UpperCamel");
+      const pattern = variant.type ? `${ctorName}(_)` : ctorName;
+      this.push(`${pattern} -> ${i + 1}\n`);
+    }
+    this.push(`}\n`);
+    this.push(`},\n`);
+    this.push(`wrap_unrecognized: fn(u) { ${unknownCtorName}(u) },\n`);
+    this.push(`get_unrecognized: fn(e) {\n`);
+    this.push(`case e {\n`);
+    this.push(`${unknownCtorName}(u) -> u\n`);
+    if (variants.length > 0) {
+      this.push(`_ -> option.None\n`);
+    }
+    this.push(`}\n`);
+    this.push(`},\n`);
+    this.push(
+      `removed_numbers: [${record.record.removedNumbers.join(", ")}],\n`,
+    );
+    this.push(`)\n`);
     this.push(`}\n\n`);
   }
 
