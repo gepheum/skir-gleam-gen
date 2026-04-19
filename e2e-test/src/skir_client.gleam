@@ -240,3 +240,60 @@ pub fn type_descriptor_to_json(td: TypeDescriptor) -> String {
 pub fn type_descriptor_from_json(json: String) -> Result(TypeDescriptor, String) {
   type_descriptor.type_descriptor_from_json(json)
 }
+
+// =============================================================================
+// TypeSignature constructors
+// (Used by generated code — Gleam can't re-export constructors, so we wrap.)
+// =============================================================================
+
+pub fn type_sig_primitive(p: PrimitiveType) -> TypeSignature {
+  type_descriptor.Primitive(p)
+}
+
+pub fn type_sig_optional(inner: TypeSignature) -> TypeSignature {
+  type_descriptor.Optional(inner)
+}
+
+pub fn type_sig_array(item: TypeSignature, key_extractor: String) -> TypeSignature {
+  type_descriptor.Array(item, key_extractor)
+}
+
+pub fn type_sig_record(id: String) -> TypeSignature {
+  type_descriptor.Record(id)
+}
+
+pub fn prim_bool() -> PrimitiveType {
+  type_descriptor.Bool
+}
+
+pub fn prim_int32() -> PrimitiveType {
+  type_descriptor.Int32
+}
+
+pub fn prim_int64() -> PrimitiveType {
+  type_descriptor.Int64
+}
+
+pub fn prim_hash64() -> PrimitiveType {
+  type_descriptor.Hash64
+}
+
+pub fn prim_float32() -> PrimitiveType {
+  type_descriptor.Float32
+}
+
+pub fn prim_float64() -> PrimitiveType {
+  type_descriptor.Float64
+}
+
+pub fn prim_timestamp() -> PrimitiveType {
+  type_descriptor.Timestamp
+}
+
+pub fn prim_string() -> PrimitiveType {
+  type_descriptor.StringType
+}
+
+pub fn prim_bytes() -> PrimitiveType {
+  type_descriptor.Bytes
+}

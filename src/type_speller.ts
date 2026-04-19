@@ -152,18 +152,18 @@ export class TypeSpeller {
       case "primitive": {
         const prim = (
           {
-            bool: "type_descriptor_.Bool",
-            int32: "type_descriptor_.Int32",
-            int64: "type_descriptor_.Int64",
-            hash64: "type_descriptor_.Hash64",
-            float32: "type_descriptor_.Float32",
-            float64: "type_descriptor_.Float64",
-            timestamp: "type_descriptor_.Timestamp",
-            string: "type_descriptor_.StringType",
-            bytes: "type_descriptor_.Bytes",
+            bool: "skir_client_.prim_bool()",
+            int32: "skir_client_.prim_int32()",
+            int64: "skir_client_.prim_int64()",
+            hash64: "skir_client_.prim_hash64()",
+            float32: "skir_client_.prim_float32()",
+            float64: "skir_client_.prim_float64()",
+            timestamp: "skir_client_.prim_timestamp()",
+            string: "skir_client_.prim_string()",
+            bytes: "skir_client_.prim_bytes()",
           } as const
         )[type.primitive];
-        return `type_descriptor_.Primitive(${prim})`;
+        return `skir_client_.type_sig_primitive(${prim})`;
       }
       case "record": {
         const rec = this.recordMap.get(type.key)!;
@@ -171,16 +171,16 @@ export class TypeSpeller {
           .map((a) => a.name.text)
           .join(".");
         const id = `${rec.modulePath}:${qualifiedName}`;
-        return `type_descriptor_.Record(${JSON.stringify(id)})`;
+        return `skir_client_.type_sig_record(${JSON.stringify(id)})`;
       }
       case "array": {
         const itemSig = this.getTypeSignatureExpression(type.item);
         const keyExtractor =
           type.key?.path.map((p) => p.name.text).join(".") ?? "";
-        return `type_descriptor_.Array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
+        return `skir_client_.type_sig_array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
       }
       case "optional": {
-        return `type_descriptor_.Optional(${this.getTypeSignatureExpression(type.other)})`;
+        return `skir_client_.type_sig_optional(${this.getTypeSignatureExpression(type.other)})`;
       }
     }
   }

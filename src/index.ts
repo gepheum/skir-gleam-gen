@@ -379,14 +379,6 @@ class GleamSourceFileGenerator {
     const hasEnums = this.group.records.some(
       (r) => r.record.recordType === "enum",
     );
-    // Check if any enum has a recursive wrapper variant (needs type_descriptor).
-    const hasRecursiveEnumVariant = this.group.records.some(
-      (r) =>
-        r.record.recordType === "enum" &&
-        r.record.fields.some(
-          (v) => v.type?.kind === "record" && v.type.key === r.record.key,
-        ),
-    );
 
     this.push(`import gleam/option as option_\n`);
     if (hasTimestamp) {
@@ -394,18 +386,19 @@ class GleamSourceFileGenerator {
     }
     this.push(`import skir_client as skir_client_\n`);
     if (hasStructs) {
-      this.push(`import struct_serializer as struct_serializer_\n`);
+      this.push(
+        `import skir_client/internal/struct_serializer as struct_serializer_\n`,
+      );
       this.push(`import gleam/dynamic/decode as decode_\n`);
       this.push(`import gleam/list as list_\n`);
       this.push(`import gleam/result as result_\n`);
     }
-    if (hasStructs || hasRecursiveEnumVariant) {
-      this.push(`import type_descriptor as type_descriptor_\n`);
-    }
     if (hasEnums) {
-      this.push(`import enum_serializer as enum_serializer_\n`);
+      this.push(
+        `import skir_client/internal/enum_serializer as enum_serializer_\n`,
+      );
     }
-    this.push(`import unrecognized as unrecognized_\n`);
+    this.push(`import skir_client/internal/unrecognized as unrecognized_\n`);
 
     const seenGroupAliases = new Set<string>();
     for (const importedPath of this.importedModulePaths) {

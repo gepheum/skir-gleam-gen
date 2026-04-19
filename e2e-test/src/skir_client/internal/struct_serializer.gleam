@@ -9,12 +9,11 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
-import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
+import skir_client/internal/unrecognized
 import type_descriptor
-import unrecognized
 
 /// The serializer for a field. Use `Eager` for non-recursive fields (serializer
 /// is constructed once), and `Lazy` for recursive fields (serializer is

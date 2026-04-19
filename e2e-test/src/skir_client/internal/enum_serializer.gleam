@@ -13,7 +13,7 @@ import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
 import type_descriptor
-import unrecognized
+import skir_client/internal/unrecognized
 
 // =============================================================================
 // VariantAdapter
