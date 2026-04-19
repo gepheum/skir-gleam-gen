@@ -7,13 +7,53 @@ import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
 import skir_client/internal/unrecognized
 import type_descriptor
+
+/// Stores an unrecognized variant encountered while deserializing an enum of
+/// type `t`.
+pub type UnrecognizedVariant(e) {
+  None
+  Some(UnrecognizedVariantData(e))
+}
+
+pub opaque type UnrecognizedVariantData(e) {
+  UnrecognizedVariantData(
+    format: unrecognized.UnrecognizedFormat,
+    number: Int,
+    value: BitArray,
+    phantom_t: List(e),
+  )
+}
+
+fn variant_data_from_bytes(
+  number: Int,
+  raw_bytes: BitArray,
+) -> UnrecognizedVariantData(e) {
+  UnrecognizedVariantData(
+    format: unrecognized.BinaryBytes,
+    number:,
+    value: raw_bytes,
+    phantom_t: [],
+  )
+}
+
+fn variant_data_from_json(
+  number: Int,
+  json_bytes: BitArray,
+) -> UnrecognizedVariantData(e) {
+  UnrecognizedVariantData(
+    format: unrecognized.DenseJson,
+    number:,
+    value: json_bytes,
+    phantom_t: [],
+  )
+}
 
 // =============================================================================
 // VariantAdapter
@@ -67,7 +107,7 @@ pub fn constant_variant(
     name:,
     number:,
     doc:,
-    constant: Some(instance),
+    constant: option.Some(instance),
     append_json: fn(_e, tree, eol_indent) {
       case eol_indent {
         "" -> string_tree.append(tree, int.to_string(number))
@@ -77,8 +117,8 @@ pub fn constant_variant(
     wrap_from_json: fn(_d) { Ok(instance) },
     encode_payload: fn(_e, tree) { tree },
     wrap_decode: fn(bits, _keep) { Ok(#(instance, bits)) },
-    wrap_default: fn() { None },
-    type_descriptor: fn() { None },
+    wrap_default: fn() { option.None },
+    type_descriptor: fn() { option.None },
   )
 }
 
@@ -101,7 +141,7 @@ pub fn wrapper_variant(
     name:,
     number:,
     doc:,
-    constant: None,
+    constant: option.None,
     append_json: fn(e, tree, eol_indent) {
       let ta = serializer_fn().adapter
       let v = unwrap(e)
@@ -154,15 +194,15 @@ pub fn wrapper_variant(
     wrap_default: fn() {
       let ta = serializer_fn().adapter
       case ta.decode(<<0>>, False) {
-        Ok(#(v, _)) -> Some(wrap(v))
-        Error(_) -> None
+        Ok(#(v, _)) -> option.Some(wrap(v))
+        Error(_) -> option.None
       }
     },
     type_descriptor: fn() {
       case type_sig {
-        None -> Some(serializer_fn().adapter.type_descriptor())
-        Some(sig) ->
-          Some(type_descriptor.TypeDescriptor(
+        option.None -> option.Some(serializer_fn().adapter.type_descriptor())
+        option.Some(sig) ->
+          option.Some(type_descriptor.TypeDescriptor(
             type_sig: sig,
             records: dict.new(),
           ))
@@ -196,16 +236,18 @@ pub fn new_serializer(
   variants variants: List(VariantAdapter(e)),
   unknown_default unknown_default: e,
   get_kind_ordinal get_kind_ordinal: fn(e) -> Int,
-  wrap_unrecognized wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) ->
-    e,
-  get_unrecognized get_unrecognized: fn(e) ->
-    unrecognized.UnrecognizedVariant(e),
+  wrap_unrecognized wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
+  get_unrecognized get_unrecognized: fn(e) -> UnrecognizedVariant(e),
   removed_numbers removed_numbers: List(Int),
 ) -> serializer.Serializer(e) {
   let variants_by_number =
     list.fold(variants, dict.new(), fn(acc, v) { dict.insert(acc, v.number, v) })
   let variants_by_name =
     list.fold(variants, dict.new(), fn(acc, v) { dict.insert(acc, v.name, v) })
+  let variants_by_name_lower =
+    list.fold(variants, dict.new(), fn(acc, v) {
+      dict.insert(acc, string.lowercase(v.name), v)
+    })
   serializer.make_serializer(
     serializer.make_type_adapter(
       is_default: fn(e) {
@@ -235,6 +277,7 @@ pub fn new_serializer(
             enum_decode_json(
               variants_by_number,
               variants_by_name,
+              variants_by_name_lower,
               removed_numbers,
               unknown_default,
               wrap_unrecognized,
@@ -281,7 +324,7 @@ pub fn new_serializer(
 fn enum_append_json(
   variants: List(VariantAdapter(e)),
   get_kind_ordinal: fn(e) -> Int,
-  get_unrecognized: fn(e) -> unrecognized.UnrecognizedVariant(e),
+  get_unrecognized: fn(e) -> UnrecognizedVariant(e),
   e: e,
   tree: StringTree,
   eol_indent: String,
@@ -297,7 +340,7 @@ fn enum_append_json(
 }
 
 fn unknown_to_json(
-  unrec: unrecognized.UnrecognizedVariant(e),
+  unrec: UnrecognizedVariant(e),
   tree: StringTree,
   eol_indent: String,
 ) -> StringTree {
@@ -306,9 +349,9 @@ fn unknown_to_json(
       case unrec {
         None -> string_tree.append(tree, "0")
         Some(data) ->
-          case unrecognized.variant_data_format(data) {
+          case data.format {
             unrecognized.DenseJson -> {
-              let raw = unrecognized.variant_data_value(data)
+              let raw = data.value
               case bit_array.to_string(raw) {
                 Ok(s) if s != "" -> string_tree.append(tree, s)
                 _ -> string_tree.append(tree, "0")
@@ -349,12 +392,24 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
   }
 }
 
+fn find_variant_by_name(
+  variants_by_name: dict.Dict(String, VariantAdapter(e)),
+  variants_by_name_lower: dict.Dict(String, VariantAdapter(e)),
+  name: String,
+) -> Result(VariantAdapter(e), Nil) {
+  case dict.get(variants_by_name, name) {
+    Ok(v) -> Ok(v)
+    Error(_) -> dict.get(variants_by_name_lower, string.lowercase(name))
+  }
+}
+
 fn enum_decode_json(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   variants_by_name: dict.Dict(String, VariantAdapter(e)),
+  variants_by_name_lower: dict.Dict(String, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
-  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   d: dynamic.Dynamic,
   keep: Bool,
 ) -> Result(e, String) {
@@ -393,12 +448,18 @@ fn enum_decode_json(
           // Try as string: constant variant by name (readable JSON).
           case decode.run(d, decode.string) {
             Ok(s) ->
-              case dict.get(variants_by_name, s) {
+              case
+                find_variant_by_name(
+                  variants_by_name,
+                  variants_by_name_lower,
+                  s,
+                )
+              {
                 Error(_) -> Ok(unknown_default)
                 Ok(v) ->
                   case v.constant {
-                    Some(c) -> Ok(c)
-                    None ->
+                    option.Some(c) -> Ok(c)
+                    option.None ->
                       Error(
                         "variant '"
                         <> s
@@ -432,10 +493,7 @@ fn enum_decode_json(
                                     )
                                   Ok(
                                     wrap_unrecognized(
-                                      Some(unrecognized.variant_data_from_json(
-                                        n,
-                                        json_bytes,
-                                      )),
+                                      Some(variant_data_from_json(n, json_bytes)),
                                     ),
                                   )
                                 }
@@ -457,12 +515,18 @@ fn enum_decode_json(
                         Error(_) -> ""
                         Ok(k) -> result.unwrap(decode.run(k, decode.string), "")
                       }
-                      case dict.get(variants_by_name, name) {
+                      case
+                        find_variant_by_name(
+                          variants_by_name,
+                          variants_by_name_lower,
+                          name,
+                        )
+                      {
                         Error(_) -> Ok(unknown_default)
                         Ok(v) ->
                           case v.constant {
-                            Some(c) -> Ok(c)
-                            None ->
+                            option.Some(c) -> Ok(c)
+                            option.None ->
                               case dict.get(obj, "value") {
                                 Ok(val_d) -> v.wrap_from_json(val_d)
                                 Error(_) ->
@@ -494,8 +558,8 @@ fn resolve_constant_number(
         Error(_) -> unknown_default
         Ok(v) ->
           case v.constant {
-            Some(c) -> c
-            None ->
+            option.Some(c) -> c
+            option.None ->
               // Wrapper variant seen in constant context: use default payload.
               option.unwrap(v.wrap_default(), unknown_default)
           }
@@ -508,7 +572,7 @@ fn resolve_constant_number_keep(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
-  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   keep: Bool,
 ) -> Result(e, String) {
   case list.contains(removed_numbers, number) {
@@ -517,8 +581,8 @@ fn resolve_constant_number_keep(
       case dict.get(variants_by_number, number) {
         Ok(v) ->
           case v.constant {
-            Some(c) -> Ok(c)
-            None -> Ok(option.unwrap(v.wrap_default(), unknown_default))
+            option.Some(c) -> Ok(c)
+            option.None -> Ok(option.unwrap(v.wrap_default(), unknown_default))
           }
         Error(_) ->
           case keep {
@@ -527,7 +591,7 @@ fn resolve_constant_number_keep(
               let json_bytes = bit_array.from_string(int.to_string(number))
               Ok(
                 wrap_unrecognized(
-                  Some(unrecognized.variant_data_from_json(number, json_bytes)),
+                  Some(variant_data_from_json(number, json_bytes)),
                 ),
               )
             }
@@ -543,7 +607,7 @@ fn resolve_constant_number_keep(
 fn enum_encode(
   variants: List(VariantAdapter(e)),
   get_kind_ordinal: fn(e) -> Int,
-  get_unrecognized: fn(e) -> unrecognized.UnrecognizedVariant(e),
+  get_unrecognized: fn(e) -> UnrecognizedVariant(e),
   e: e,
   tree: BytesTree,
 ) -> BytesTree {
@@ -553,8 +617,8 @@ fn enum_encode(
       case get_unrecognized(e) {
         None -> bytes_tree.append(tree, <<0>>)
         Some(data) -> {
-          let fmt = unrecognized.variant_data_format(data)
-          let bytes = unrecognized.variant_data_value(data)
+          let fmt = data.format
+          let bytes = data.value
           case
             fmt == unrecognized.BinaryBytes && bit_array.byte_size(bytes) > 0
           {
@@ -568,10 +632,10 @@ fn enum_encode(
         Error(_) -> bytes_tree.append(tree, <<0>>)
         Ok(v) ->
           case v.constant {
-            Some(_) ->
+            option.Some(_) ->
               // Constant variant: encode the variant number as a varint.
               bytes_tree.append(tree, encode_uint32(v.number))
-            None -> {
+            option.None -> {
               // Wrapper variant: header byte(s) then the payload.
               let n = v.number
               let t1 = case n >= 1 && n <= 4 {
@@ -599,7 +663,7 @@ fn enum_decode_binary(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
-  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   bits: BitArray,
   keep: Bool,
 ) -> Result(#(e, BitArray), String) {
@@ -673,7 +737,7 @@ fn resolve_constant_number_bin(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
-  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   keep: Bool,
   raw_bits: BitArray,
 ) -> e {
@@ -685,14 +749,14 @@ fn resolve_constant_number_bin(
           case keep {
             False -> unknown_default
             True -> {
-              let ud = unrecognized.variant_data_from_bytes(number, raw_bits)
+              let ud = variant_data_from_bytes(number, raw_bits)
               wrap_unrecognized(Some(ud))
             }
           }
         Ok(v) ->
           case v.constant {
-            Some(c) -> c
-            None ->
+            option.Some(c) -> c
+            option.None ->
               // Wrapper variant seen in constant context: use default payload.
               option.unwrap(v.wrap_default(), unknown_default)
           }
@@ -705,7 +769,7 @@ fn decode_wrapper_number(
   variants_by_number: dict.Dict(Int, VariantAdapter(e)),
   removed_numbers: List(Int),
   unknown_default: e,
-  wrap_unrecognized: fn(unrecognized.UnrecognizedVariant(e)) -> e,
+  wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   bits: BitArray,
   keep: Bool,
 ) -> Result(#(e, BitArray), String) {
@@ -736,8 +800,7 @@ fn decode_wrapper_number(
                   let payload =
                     bit_array.slice(bits, 0, consumed) |> result.unwrap(<<>>)
                   let all_bytes = bit_array.append(header, payload)
-                  let ud =
-                    unrecognized.variant_data_from_bytes(number, all_bytes)
+                  let ud = variant_data_from_bytes(number, all_bytes)
                   Ok(#(wrap_unrecognized(Some(ud)), rest))
                 }
               }
@@ -763,13 +826,13 @@ fn enum_type_descriptor(
   let variants_desc =
     list.map(variants, fn(v) {
       case v.type_descriptor() {
-        None ->
+        option.None ->
           type_descriptor.ConstantVariant(
             name: v.name,
             number: v.number,
             doc: v.doc,
           )
-        Some(td) ->
+        option.Some(td) ->
           type_descriptor.WrapperVariant(
             name: v.name,
             number: v.number,
@@ -781,8 +844,8 @@ fn enum_type_descriptor(
   let all_records =
     list.fold(variants, dict.new(), fn(acc, v) {
       case v.type_descriptor() {
-        None -> acc
-        Some(td) -> dict.merge(acc, td.records)
+        option.None -> acc
+        option.Some(td) -> dict.merge(acc, td.records)
       }
     })
   let enum_descriptor =

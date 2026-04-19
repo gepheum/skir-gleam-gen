@@ -3,6 +3,7 @@
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 // TODO: fix all comments
+// TODO: use an enum for Keep
 // TODO: the logic for determining what types to import is flawed...
 // TODO: use enum for UnrecognizedValues...
 
@@ -284,7 +285,6 @@ const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/list", "list_"],
   ["gleam/result", "result_"],
   ["skir_client/internal/enum_serializer", "enum_serializer_"],
-  ["skir_client/internal/unrecognized", "unrecognized_"],
 ] as const;
 
 class GleamSourceFileGenerator {
@@ -449,12 +449,10 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
-    this.neededModules.add("gleam/option");
     this.neededModules.add("skir_client");
     this.neededModules.add("skir_client/internal/struct_serializer");
     this.neededModules.add("gleam/list");
     this.neededModules.add("gleam/result");
-    this.neededModules.add("skir_client/internal/unrecognized");
     const { typeSpeller } = this;
     const typeName =
       this.uniqueTypeNames.get(struct.record.key) ?? getTypeName(struct);
@@ -476,6 +474,9 @@ class GleamSourceFileGenerator {
 
     // Determine which fields are hard-recursive (need Option wrapping).
     const hardRecFields = fields.filter((f) => f.isRecursive === "hard");
+    if (hardRecFields.length > 0) {
+      this.neededModules.add("gleam/option");
+    }
 
     // Type definition.
     // Hard-recursive fields are stored internally as option.Option(T) under the
@@ -495,7 +496,7 @@ class GleamSourceFileGenerator {
     }
     // Trailing underscore avoids conflict with user-defined fields named `unrecognized`.
     this.push(
-      `unrecognized_: unrecognized_.UnrecognizedFields(${typeName}),\n`,
+      `unrecognized_: struct_serializer_.UnrecognizedFields(${typeName}),\n`,
     );
     this.push(")\n");
     this.push("}\n\n");
@@ -540,7 +541,7 @@ class GleamSourceFileGenerator {
         this.push(`${fieldName}: ${defExpr},\n`);
       }
     }
-    this.push(`unrecognized_: option_.None,\n`);
+    this.push(`unrecognized_: struct_serializer_.None,\n`);
     if (useConstDefault) {
       this.push(")\n\n");
     } else {
@@ -573,7 +574,7 @@ class GleamSourceFileGenerator {
         this.push(`${fieldName}: ${fieldName},\n`);
       }
     }
-    this.push(`unrecognized_: option_.None,\n`);
+    this.push(`unrecognized_: struct_serializer_.None,\n`);
     this.push(`)\n`);
     this.push(`}\n\n`);
 
@@ -744,7 +745,7 @@ class GleamSourceFileGenerator {
     const structArgsBin =
       fieldArgsBin +
       (fieldsByNumber.length > 0 ? ", " : "") +
-      "unrecognized_: option_.None";
+      "unrecognized_: struct_serializer_.None";
     this.push(`Ok(#(${typeName}(${structArgsBin}), bits))\n`);
     this.push(`},\n`);
 
@@ -753,10 +754,8 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForEnum(record: RecordLocation): void {
-    this.neededModules.add("gleam/option");
     this.neededModules.add("skir_client");
     this.neededModules.add("skir_client/internal/enum_serializer");
-    this.neededModules.add("skir_client/internal/unrecognized");
     const { typeSpeller } = this;
     const typeName =
       this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
@@ -781,7 +780,7 @@ class GleamSourceFileGenerator {
     // user-defined variant named "unknown"; this is documented as reserved.
     this.push(`pub type ${typeName} {\n`);
     this.push(
-      `${unknownCtorName}(unrecognized_.UnrecognizedVariant(${typeName}))\n`,
+      `${unknownCtorName}(enum_serializer_.UnrecognizedVariant(${typeName}))\n`,
     );
     for (const variant of variants) {
       const ctorName =
@@ -800,7 +799,7 @@ class GleamSourceFileGenerator {
     // Default const — an enum defaults to the Unknown variant.
     this.push(`/// The default \`${typeName}\` (the unknown variant).\n`);
     this.push(
-      `pub const ${fnPrefix}unknown = ${unknownCtorName}(option_.None)\n\n`,
+      `pub const ${fnPrefix}unknown = ${unknownCtorName}(enum_serializer_.None)\n\n`,
     );
 
     // Serializer.
@@ -823,7 +822,9 @@ class GleamSourceFileGenerator {
       if (!variant.type) {
         // Constant variant.
         this.push(`enum_serializer_.constant_variant(\n`);
-        this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
+        this.push(
+          `name: ${JSON.stringify(convertCase(variant.name.text, "UPPER_UNDERSCORE"))},\n`,
+        );
         this.push(`number: ${variant.number},\n`);
         this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
         this.push(`instance: ${ctorName},\n`);
@@ -834,6 +835,7 @@ class GleamSourceFileGenerator {
         const vType = variant.type!;
         const isDirectSelfRef =
           vType.kind === "record" && vType.key === record.record.key;
+        this.neededModules.add("gleam/option");
         this.push(`enum_serializer_.wrapper_variant(\n`);
         this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
         this.push(`number: ${variant.number},\n`);
@@ -873,7 +875,7 @@ class GleamSourceFileGenerator {
     this.push(`case e {\n`);
     this.push(`${unknownCtorName}(u) -> u\n`);
     if (variants.length > 0) {
-      this.push(`_ -> option_.None\n`);
+      this.push(`_ -> enum_serializer_.None\n`);
     }
     this.push(`}\n`);
     this.push(`},\n`);

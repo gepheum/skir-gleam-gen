@@ -8,12 +8,53 @@ import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
 import skir_client/internal/unrecognized
 import type_descriptor
+
+/// Stores unrecognized fields encountered while deserializing a struct of type
+/// `t`. `None` when deserialization was performed without keeping unrecognized
+/// values.
+pub type UnrecognizedFields(t) {
+  None
+  Some(UnrecognizedFieldsData(t))
+}
+
+pub opaque type UnrecognizedFieldsData(t) {
+  UnrecognizedFieldsData(
+    format: unrecognized.UnrecognizedFormat,
+    array_len: Int,
+    values: BitArray,
+    phantom_t: List(t),
+  )
+}
+
+fn fields_data_from_json(
+  array_len: Int,
+  json_bytes: BitArray,
+) -> UnrecognizedFieldsData(t) {
+  UnrecognizedFieldsData(
+    format: unrecognized.DenseJson,
+    array_len:,
+    values: json_bytes,
+    phantom_t: [],
+  )
+}
+
+fn fields_data_from_bytes(
+  array_len: Int,
+  raw_bytes: BitArray,
+) -> UnrecognizedFieldsData(t) {
+  UnrecognizedFieldsData(
+    format: unrecognized.BinaryBytes,
+    array_len:,
+    values: raw_bytes,
+    phantom_t: [],
+  )
+}
 
 /// The serializer for a field. Use `Eager` for non-recursive fields (serializer
 /// is constructed once), and `Lazy` for recursive fields (serializer is
@@ -120,8 +161,8 @@ pub fn take_slot(
   arr: List(dynamic.Dynamic),
 ) -> #(option.Option(dynamic.Dynamic), List(dynamic.Dynamic)) {
   case arr {
-    [] -> #(None, [])
-    [h, ..t] -> #(Some(h), t)
+    [] -> #(option.None, [])
+    [h, ..t] -> #(option.Some(h), t)
   }
 }
 
@@ -134,8 +175,8 @@ pub fn decode_json_field(
   serializer s: serializer.Serializer(f),
 ) -> Result(f, String) {
   case opt_elem {
-    None -> Ok(default)
-    Some(elem) ->
+    option.None -> Ok(default)
+    option.Some(elem) ->
       case decode.run(elem, s.adapter.decode_json(keep)) {
         Ok(v) -> Ok(v)
         Error(errs) ->
@@ -184,10 +225,10 @@ pub fn decode_json_field_opt(
   serializer s: serializer.Serializer(f),
 ) -> Result(option.Option(f), String) {
   case opt_elem {
-    None -> Ok(None)
-    Some(elem) ->
+    option.None -> Ok(option.None)
+    option.Some(elem) ->
       case decode.run(elem, s.adapter.decode_json(keep)) {
-        Ok(v) -> Ok(Some(v))
+        Ok(v) -> Ok(option.Some(v))
         Error(errs) ->
           case errs {
             [decode.DecodeError(expected:, found:, ..)] ->
@@ -207,10 +248,10 @@ pub fn decode_binary_field_opt(
   serializer s: serializer.Serializer(f),
 ) -> Result(#(option.Option(f), BitArray), String) {
   case active {
-    False -> Ok(#(None, bits))
+    False -> Ok(#(option.None, bits))
     True ->
       case s.adapter.decode(bits, keep) {
-        Ok(#(v, rest)) -> Ok(#(Some(v), rest))
+        Ok(#(v, rest)) -> Ok(#(option.Some(v), rest))
         Error(e) -> Error(e)
       }
   }
@@ -220,7 +261,7 @@ pub fn make_unrecognized_fields_json(
   extra_elements: List(dynamic.Dynamic),
   arr_len: Int,
   keep: Bool,
-) -> unrecognized.UnrecognizedFields(s) {
+) -> UnrecognizedFields(s) {
   case keep && !list.is_empty(extra_elements) {
     False -> None
     True -> {
@@ -228,10 +269,7 @@ pub fn make_unrecognized_fields_json(
         "["
         <> string.join(list.map(extra_elements, dynamic_to_json_string), ",")
         <> "]"
-      Some(unrecognized.fields_data_from_json(
-        arr_len,
-        bit_array.from_string(extra_json),
-      ))
+      Some(fields_data_from_json(arr_len, bit_array.from_string(extra_json)))
     }
   }
 }
@@ -243,9 +281,8 @@ pub fn new_serializer(
   doc doc: String,
   ordered_fields ordered_fields: List(FieldAdapter(s)),
   default default: s,
-  get_unrecognized get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
-  set_unrecognized set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) ->
-    s,
+  get_unrecognized get_unrecognized: fn(s) -> UnrecognizedFields(s),
+  set_unrecognized set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   removed_numbers removed_numbers: List(Int),
   recognized_slot_count recognized_slot_count: Int,
   decode_dense_json decode_dense_json: fn(List(dynamic.Dynamic), Bool) ->
@@ -363,7 +400,7 @@ pub fn new_serializer(
 
 fn struct_is_default(
   fields: List(FieldAdapter(s)),
-  get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  get_unrecognized: fn(s) -> UnrecognizedFields(s),
   s: s,
 ) -> Bool {
   case get_unrecognized(s) {
@@ -374,7 +411,7 @@ fn struct_is_default(
 
 fn struct_append_json(
   fields: List(FieldAdapter(s)),
-  get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
   tree: StringTree,
@@ -395,7 +432,7 @@ fn struct_append_json(
 
 fn struct_encode(
   fields: List(FieldAdapter(s)),
-  get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
   tree: BytesTree,
@@ -403,38 +440,34 @@ fn struct_encode(
   let unrec = get_unrecognized(s)
   let #(total_slot_count, recognized_slot_count, extra_bytes) = case unrec {
     Some(u) -> {
-      let fmt = unrecognized.fields_data_format(u)
-      let vals = unrecognized.fields_data_values(u)
+      let fmt = u.format
+      let vals = u.values
       case fmt == unrecognized.BinaryBytes && bit_array.byte_size(vals) > 0 {
         True -> {
-          #(
-            unrecognized.fields_data_array_len(u),
-            recognized_slot_count,
-            Some(vals),
-          )
+          #(u.array_len, recognized_slot_count, option.Some(vals))
         }
         False -> {
           let c = get_slot_count(fields, s)
-          #(c, c, None)
+          #(c, c, option.None)
         }
       }
     }
     None -> {
       let c = get_slot_count(fields, s)
-      #(c, c, None)
+      #(c, c, option.None)
     }
   }
   let tree = encode_slot_count(total_slot_count, tree)
   let tree = encode_slots_binary(fields, s, 0, recognized_slot_count, tree)
   case extra_bytes {
-    Some(bytes) -> bytes_tree.append(tree, bytes)
-    None -> tree
+    option.Some(bytes) -> bytes_tree.append(tree, bytes)
+    option.None -> tree
   }
 }
 
 fn struct_decode(
   _fields: List(FieldAdapter(s)),
-  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
+  set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   recognized_slot_count: Int,
   decode_binary: fn(BitArray, Int, Bool) -> Result(#(s, BitArray), String),
   bits: BitArray,
@@ -489,7 +522,7 @@ fn struct_decode(
 
 fn append_dense_json(
   fields: List(FieldAdapter(s)),
-  get_unrecognized: fn(s) -> unrecognized.UnrecognizedFields(s),
+  get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
   tree: StringTree,
@@ -498,8 +531,8 @@ fn append_dense_json(
   let unrec = get_unrecognized(s)
   let tree = case unrec {
     Some(u) -> {
-      let fmt = unrecognized.fields_data_format(u)
-      let vals = unrecognized.fields_data_values(u)
+      let fmt = u.format
+      let vals = u.values
       case fmt == unrecognized.DenseJson && bit_array.byte_size(vals) > 0 {
         True -> {
           let tree =
@@ -731,7 +764,7 @@ fn decode_slot_count(
 }
 
 fn capture_unrecognized_bytes(
-  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
+  set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   s: s,
   total_slot_count: Int,
   extra: Int,
@@ -747,10 +780,7 @@ fn capture_unrecognized_bytes(
           let new_s =
             set_unrecognized(
               s,
-              Some(unrecognized.fields_data_from_bytes(
-                total_slot_count,
-                captured,
-              )),
+              Some(fields_data_from_bytes(total_slot_count, captured)),
             )
           Ok(#(new_s, remaining))
         }
