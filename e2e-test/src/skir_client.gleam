@@ -254,7 +254,10 @@ pub fn type_sig_optional(inner: TypeSignature) -> TypeSignature {
   type_descriptor.Optional(inner)
 }
 
-pub fn type_sig_array(item: TypeSignature, key_extractor: String) -> TypeSignature {
+pub fn type_sig_array(
+  item: TypeSignature,
+  key_extractor: String,
+) -> TypeSignature {
   type_descriptor.Array(item, key_extractor)
 }
 

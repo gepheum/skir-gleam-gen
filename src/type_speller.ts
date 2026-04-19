@@ -16,6 +16,8 @@ export class TypeSpeller {
     private readonly defaultExprFor: (key: RecordKey) => string,
     /** Returns the Gleam serializer() call expression for a record reference. */
     private readonly serializerExprFor: (key: RecordKey) => string,
+    /** Accumulates the set of Gleam module paths that this speller references. */
+    private readonly neededModules: Set<string>,
   ) {}
 
   /**
@@ -28,6 +30,7 @@ export class TypeSpeller {
       case "array":
         return `List(${this.getGleamType(type.item)})`;
       case "optional":
+        this.neededModules.add("gleam/option");
         return `option_.Option(${this.getGleamType(type.other)})`;
       case "primitive": {
         switch (type.primitive) {
@@ -43,6 +46,7 @@ export class TypeSpeller {
           case "string":
             return "String";
           case "timestamp":
+            this.neededModules.add("gleam/time/timestamp");
             return "timestamp_.Timestamp";
           case "bytes":
             return "BitArray";
@@ -57,6 +61,7 @@ export class TypeSpeller {
    * Returns the Gleam serializer expression for the given type.
    */
   getSerializerExpression(type: ResolvedType): string {
+    this.neededModules.add("skir_client");
     switch (type.kind) {
       case "primitive": {
         switch (type.primitive) {
@@ -118,6 +123,7 @@ export class TypeSpeller {
       case "array":
         return "[]";
       case "optional":
+        this.neededModules.add("gleam/option");
         return "option_.None";
       case "primitive": {
         switch (type.primitive) {
@@ -133,6 +139,7 @@ export class TypeSpeller {
           case "string":
             return '""';
           case "timestamp":
+            this.neededModules.add("gleam/time/timestamp");
             return "timestamp_.from_unix_seconds_and_nanoseconds(0, 0)";
           case "bytes":
             return "<<>>";
@@ -148,6 +155,7 @@ export class TypeSpeller {
    * Used to populate the `type_sig` field of FieldSpec for recursive fields.
    */
   getTypeSignatureExpression(type: ResolvedType): string {
+    this.neededModules.add("skir_client");
     switch (type.kind) {
       case "primitive": {
         const prim = (

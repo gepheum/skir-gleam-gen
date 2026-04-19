@@ -12,8 +12,8 @@ import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
 import serializer
-import type_descriptor
 import skir_client/internal/unrecognized
+import type_descriptor
 
 // =============================================================================
 // VariantAdapter

@@ -275,8 +275,21 @@ function computeModuleNames(records: readonly RecordLocation[]): {
 }
 
 // Generates the code for one Gleam source file (one GroupInfo → one file).
+/** Ordered list of client library module paths and their import aliases. */
+const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
+  ["gleam/option", "option_"],
+  ["gleam/time/timestamp", "timestamp_"],
+  ["skir_client", "skir_client_"],
+  ["skir_client/internal/struct_serializer", "struct_serializer_"],
+  ["gleam/list", "list_"],
+  ["gleam/result", "result_"],
+  ["skir_client/internal/enum_serializer", "enum_serializer_"],
+  ["skir_client/internal/unrecognized", "unrecognized_"],
+] as const;
+
 class GleamSourceFileGenerator {
   private code = "";
+  private readonly neededModules = new Set<string>();
   private readonly typeSpeller: TypeSpeller;
   private readonly constDefaultKeys: ReadonlySet<RecordKey>;
 
@@ -334,6 +347,7 @@ class GleamSourceFileGenerator {
       typeExprFor,
       defaultExprFor,
       serializerExprFor,
+      this.neededModules,
     );
   }
 
@@ -355,7 +369,10 @@ class GleamSourceFileGenerator {
 `,
     );
 
-    this.writeImports();
+    // Save the header (banner comment), then generate all body code into
+    // this.code. Body generation populates this.neededModules.
+    const header = this.code;
+    this.code = "";
 
     for (const recordLocation of this.group.records) {
       const { record } = recordLocation;
@@ -368,38 +385,25 @@ class GleamSourceFileGenerator {
 
     this.writeConstants();
 
+    const body = this.code;
+
+    // Build imports from the collected set, in canonical order.
+    this.code = header;
+    this.writeImports();
+    this.push(body);
+
     return this.joinLinesAndFixFormatting();
   }
 
   private writeImports(): void {
-    const hasTimestamp = this.groupUsesTimestamp();
-    const hasStructs = this.group.records.some(
-      (r) => r.record.recordType === "struct",
-    );
-    const hasEnums = this.group.records.some(
-      (r) => r.record.recordType === "enum",
-    );
+    // Client library modules, in canonical order.
+    for (const [modulePath, alias] of CLIENT_MODULES) {
+      if (this.neededModules.has(modulePath)) {
+        this.push(`import ${modulePath} as ${alias}\n`);
+      }
+    }
 
-    this.push(`import gleam/option as option_\n`);
-    if (hasTimestamp) {
-      this.push(`import gleam/time/timestamp as timestamp_\n`);
-    }
-    this.push(`import skir_client as skir_client_\n`);
-    if (hasStructs) {
-      this.push(
-        `import skir_client/internal/struct_serializer as struct_serializer_\n`,
-      );
-      this.push(`import gleam/dynamic/decode as decode_\n`);
-      this.push(`import gleam/list as list_\n`);
-      this.push(`import gleam/result as result_\n`);
-    }
-    if (hasEnums) {
-      this.push(
-        `import skir_client/internal/enum_serializer as enum_serializer_\n`,
-      );
-    }
-    this.push(`import skir_client/internal/unrecognized as unrecognized_\n`);
-
+    // Cross-module skirout imports.
     const seenGroupAliases = new Set<string>();
     for (const importedPath of this.importedModulePaths) {
       const refGroup = this.pathToGroup.get(importedPath);
@@ -412,36 +416,10 @@ class GleamSourceFileGenerator {
     this.push("\n");
   }
 
-  /**
-   * Returns true if any field in any record in this group uses the timestamp primitive.
-   */
-  private groupUsesTimestamp(): boolean {
-    const check = (type: ResolvedType): boolean => {
-      switch (type.kind) {
-        case "primitive":
-          return type.primitive === "timestamp";
-        case "array":
-          return check(type.item);
-        case "optional":
-          return check(type.other);
-        case "record":
-          return false;
-      }
-    };
-    for (const rec of this.group.records) {
-      for (const field of rec.record.fields) {
-        if (field.type && check(field.type)) return true;
-      }
-    }
-    for (const constant of this.group.constants) {
-      if (constant.type && check(constant.type)) return true;
-    }
-    return false;
-  }
-
   private writeConstants(): void {
     for (const constant of this.group.constants) {
       if (!constant.type || constant.valueAsDenseJson === undefined) continue;
+      this.neededModules.add("skir_client");
       const fnName = convertCase(constant.name.text, "lower_underscore");
       const gleamType = this.typeSpeller.getGleamType(constant.type);
       const serializerExpr = this.typeSpeller.getSerializerExpression(
@@ -471,6 +449,12 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
+    this.neededModules.add("gleam/option");
+    this.neededModules.add("skir_client");
+    this.neededModules.add("skir_client/internal/struct_serializer");
+    this.neededModules.add("gleam/list");
+    this.neededModules.add("gleam/result");
+    this.neededModules.add("skir_client/internal/unrecognized");
     const { typeSpeller } = this;
     const typeName =
       this.uniqueTypeNames.get(struct.record.key) ?? getTypeName(struct);
@@ -767,6 +751,10 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForEnum(record: RecordLocation): void {
+    this.neededModules.add("gleam/option");
+    this.neededModules.add("skir_client");
+    this.neededModules.add("skir_client/internal/enum_serializer");
+    this.neededModules.add("skir_client/internal/unrecognized");
     const { typeSpeller } = this;
     const typeName =
       this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
