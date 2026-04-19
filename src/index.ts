@@ -707,7 +707,9 @@ class GleamSourceFileGenerator {
     this.push(`},\n`);
 
     // Generate decode_binary callback
-    this.push(`decode_binary: fn(bits, slots_to_fill, keep) {\n`);
+    const slotsToFillParam = numSlots > 0 ? "slots_to_fill" : "_slots_to_fill";
+    const keepParam = fieldsByNumber.length > 0 ? "keep" : "_keep";
+    this.push(`decode_binary: fn(bits, ${slotsToFillParam}, ${keepParam}) {\n`);
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
       if (field) {
