@@ -16,23 +16,12 @@ import serializer
 import type_descriptor
 import unrecognized
 
-pub type Recursivity {
-  Recursive
-  NotRecursive
-}
-
-pub type FieldSpec(s, f) {
-  FieldSpec(
-    name: String,
-    number: Int,
-    doc: String,
-    default: f,
-    type_sig: type_descriptor.TypeSignature,
-    get: fn(s) -> f,
-    set: fn(s, f) -> s,
-    serializer: fn() -> serializer.Serializer(f),
-    recursive: Recursivity,
-  )
+/// The serializer for a field. Use `Eager` for non-recursive fields (serializer
+/// is constructed once), and `Lazy` for recursive fields (serializer is
+/// constructed on demand to avoid infinite recursion).
+pub type FieldSerializer(f) {
+  Eager(serializer.Serializer(f))
+  Lazy(fn() -> serializer.Serializer(f))
 }
 
 pub type FieldAdapter(s) {
@@ -49,65 +38,72 @@ pub type FieldAdapter(s) {
   )
 }
 
-pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
-  case spec.recursive {
-    NotRecursive -> {
-      let ta = spec.serializer().adapter
+pub fn field_spec_to_field_adapter(
+  name name: String,
+  number number: Int,
+  doc doc: String,
+  default default: f,
+  type_sig type_sig: type_descriptor.TypeSignature,
+  get get: fn(s) -> f,
+  set set: fn(s, f) -> s,
+  serializer field_serializer: FieldSerializer(f),
+) -> FieldAdapter(s) {
+  case field_serializer {
+    Eager(s) -> {
+      let ta = s.adapter
       FieldAdapter(
-        name: spec.name,
-        number: spec.number,
-        doc: spec.doc,
-        is_default: fn(s) { ta.is_default(spec.get(s)) },
-        append_json: fn(s, tree, eol_indent) {
-          ta.append_json(spec.get(s), tree, eol_indent)
+        name: name,
+        number: number,
+        doc: doc,
+        is_default: fn(acc) { ta.is_default(get(acc)) },
+        append_json: fn(acc, tree, eol_indent) {
+          ta.append_json(get(acc), tree, eol_indent)
         },
-        decode_json: fn(d, s) {
+        decode_json: fn(d, acc) {
           case decode.run(d, ta.decode_json(False)) {
-            Ok(f_val) -> Ok(spec.set(s, f_val))
+            Ok(f_val) -> Ok(set(acc, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
             Error([]) -> Error("decode error")
           }
         },
-        encode: fn(s, tree) { ta.encode(spec.get(s), tree) },
-        decode: fn(bits, s, keep_unrecognized) {
+        encode: fn(acc, tree) { ta.encode(get(acc), tree) },
+        decode: fn(bits, acc, keep_unrecognized) {
           case ta.decode(bits, keep_unrecognized) {
-            Ok(#(f_val, rest)) -> Ok(#(spec.set(s, f_val), rest))
+            Ok(#(f_val, rest)) -> Ok(#(set(acc, f_val), rest))
             Error(e) -> Error(e)
           }
         },
         type_descriptor: fn() { ta.type_descriptor() },
       )
     }
-    Recursive ->
+    Lazy(f) ->
       FieldAdapter(
-        name: spec.name,
-        number: spec.number,
-        doc: spec.doc,
-        is_default: fn(s) { spec.get(s) == spec.default },
-        append_json: fn(s, tree, eol_indent) {
-          spec.serializer().adapter.append_json(spec.get(s), tree, eol_indent)
+        name: name,
+        number: number,
+        doc: doc,
+        is_default: fn(acc) { get(acc) == default },
+        append_json: fn(acc, tree, eol_indent) {
+          f().adapter.append_json(get(acc), tree, eol_indent)
         },
-        decode_json: fn(d, s) {
-          case decode.run(d, spec.serializer().adapter.decode_json(False)) {
-            Ok(f_val) -> Ok(spec.set(s, f_val))
+        decode_json: fn(d, acc) {
+          case decode.run(d, f().adapter.decode_json(False)) {
+            Ok(f_val) -> Ok(set(acc, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
             Error([]) -> Error("decode error")
           }
         },
-        encode: fn(s, tree) {
-          spec.serializer().adapter.encode(spec.get(s), tree)
-        },
-        decode: fn(bits, s, keep_unrecognized) {
-          case spec.serializer().adapter.decode(bits, keep_unrecognized) {
-            Ok(#(f_val, rest)) -> Ok(#(spec.set(s, f_val), rest))
+        encode: fn(acc, tree) { f().adapter.encode(get(acc), tree) },
+        decode: fn(bits, acc, keep_unrecognized) {
+          case f().adapter.decode(bits, keep_unrecognized) {
+            Ok(#(f_val, rest)) -> Ok(#(set(acc, f_val), rest))
             Error(e) -> Error(e)
           }
         },
         type_descriptor: fn() {
           type_descriptor.TypeDescriptor(
-            type_sig: spec.type_sig,
+            type_sig: type_sig,
             records: dict.new(),
           )
         },

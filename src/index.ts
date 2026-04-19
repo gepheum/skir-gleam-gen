@@ -1,5 +1,4 @@
 // TODO: keyed arrays
-// TODO: optimize decode and parse_dense_json for structs...
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 // TODO: fix all comments
@@ -637,6 +636,15 @@ class GleamSourceFileGenerator {
     this.push(
       `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
     );
+    // Hoist non-recursive serializer construction so it is created once and
+    // reused in ordered_fields, decode_dense_json, and decode_binary.
+    for (const field of fieldsByNumber) {
+      if (field.isRecursive === false) {
+        const varName = toFieldName(field.name.text);
+        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        this.push(`let ${varName}_serializer = ${serExpr}\n`);
+      }
+    }
     this.push(`struct_serializer.new_serializer(\n`);
     this.push(`name: ${JSON.stringify(struct.record.name.text)},\n`);
     this.push(
@@ -650,9 +658,7 @@ class GleamSourceFileGenerator {
       const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
       const fieldType = typeSpeller.getGleamType(field.type!);
-      this.push(
-        `struct_serializer.field_spec_to_field_adapter(struct_serializer.FieldSpec(\n`,
-      );
+      this.push(`struct_serializer.field_spec_to_field_adapter(\n`);
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
@@ -671,13 +677,16 @@ class GleamSourceFileGenerator {
           `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}: v) },\n`,
         );
       }
-      this.push(`serializer: fn() {\n`);
-      this.push(`${typeSpeller.getSerializerExpression(field.type!)}\n`);
-      this.push(`},\n`);
-      this.push(
-        `recursive: ${isRecursive ? "struct_serializer.Recursive" : "struct_serializer.NotRecursive"},\n`,
-      );
-      this.push(`)),\n`);
+      if (isRecursive) {
+        this.push(`serializer: struct_serializer.Lazy(fn() {\n`);
+        this.push(`${typeSpeller.getSerializerExpression(field.type!)}\n`);
+        this.push(`}),\n`);
+      } else {
+        this.push(
+          `serializer: struct_serializer.Eager(${fieldName}_serializer),\n`,
+        );
+      }
+      this.push(`),\n`);
     }
     this.push(`],\n`);
     this.push(`default: ${structDefaultExpr},\n`);
@@ -705,14 +714,16 @@ class GleamSourceFileGenerator {
     this.push(`let arr_len = list.length(arr)\n`);
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
-      const arrIn = slot === 0 ? "arr" : `arr_${slot}`;
       if (field) {
         const isHardRec = field.isRecursive === "hard";
         const varName = toFieldName(field.name.text);
         const defExpr = typeSpeller.getDefaultExpression(field.type!);
-        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        const serExpr =
+          field.isRecursive === false
+            ? `${varName}_serializer`
+            : typeSpeller.getSerializerExpression(field.type!);
         this.push(
-          `let #(slot_${slot}_dyn, arr_${slot + 1}) = struct_serializer.take_slot(${arrIn})\n`,
+          `let #(slot_${slot}_dyn, arr) = struct_serializer.take_slot(arr)\n`,
         );
         if (isHardRec) {
           this.push(
@@ -725,13 +736,12 @@ class GleamSourceFileGenerator {
         }
       } else {
         this.push(
-          `let #(_, arr_${slot + 1}) = struct_serializer.take_slot(${arrIn})\n`,
+          `let #(_, arr) = struct_serializer.take_slot(arr)\n`,
         );
       }
     }
-    const lastArrVar = numSlots === 0 ? "arr" : `arr_${numSlots}`;
     this.push(
-      `let unrecognized_ = struct_serializer.make_unrecognized_fields_json(${lastArrVar}, arr_len, keep)\n`,
+      `let unrecognized_ = struct_serializer.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
     );
     const fieldArgsDense = fieldsByNumber
       .map((f) => {
@@ -750,29 +760,29 @@ class GleamSourceFileGenerator {
     this.push(`decode_binary: fn(bits, slots_to_fill, keep) {\n`);
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
-      const bitsIn = slot === 0 ? "bits" : `bits_${slot}`;
-      const bitsOut = `bits_${slot + 1}`;
       if (field) {
         const isHardRec = field.isRecursive === "hard";
         const varName = toFieldName(field.name.text);
         const defExpr = typeSpeller.getDefaultExpression(field.type!);
-        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        const serExpr =
+          field.isRecursive === false
+            ? `${varName}_serializer`
+            : typeSpeller.getSerializerExpression(field.type!);
         if (isHardRec) {
           this.push(
-            `use #(${varName}_rec, ${bitsOut}) <- result.try(struct_serializer.decode_binary_field_opt(${bitsIn}, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
+            `use #(${varName}_rec, bits) <- result.try(struct_serializer.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
           );
         } else {
           this.push(
-            `use #(${varName}, ${bitsOut}) <- result.try(struct_serializer.decode_binary_field(${bitsIn}, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+            `use #(${varName}, bits) <- result.try(struct_serializer.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
           );
         }
       } else {
         this.push(
-          `use ${bitsOut} <- result.try(struct_serializer.skip_binary_slot(${bitsIn}, slots_to_fill > ${slot}))\n`,
+          `use bits <- result.try(struct_serializer.skip_binary_slot(bits, slots_to_fill > ${slot}))\n`,
         );
       }
     }
-    const lastBitsVar = numSlots === 0 ? "bits" : `bits_${numSlots}`;
     const fieldArgsBin = fieldsByNumber
       .map((f) => {
         const varName = toFieldName(f.name.text);
@@ -783,7 +793,7 @@ class GleamSourceFileGenerator {
       fieldArgsBin +
       (fieldsByNumber.length > 0 ? ", " : "") +
       "unrecognized_: option.None";
-    this.push(`Ok(#(${typeName}(${structArgsBin}), ${lastBitsVar}))\n`);
+    this.push(`Ok(#(${typeName}(${structArgsBin}), bits))\n`);
     this.push(`},\n`);
 
     this.push(`)\n`);
