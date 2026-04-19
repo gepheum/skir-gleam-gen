@@ -6,7 +6,6 @@
 // TODO: the logic for determining what types to import is flawed...
 // TODO: use enum for UnrecognizedValues...
 
-
 import {
   type CodeGenerator,
   type Constant,
@@ -654,9 +653,7 @@ class GleamSourceFileGenerator {
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
-      this.push(
-        `default: ${typeSpeller.getDefaultExpression(field.type!)},\n`,
-      );
+      this.push(`default: ${typeSpeller.getDefaultExpression(field.type!)},\n`);
       this.push(
         `type_sig: ${typeSpeller.getTypeSignatureExpression(field.type!)},\n`,
       );

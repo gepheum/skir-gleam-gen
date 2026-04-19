@@ -351,14 +351,16 @@ fn float_to_json_str(f: Float) -> String {
   }
 }
 
-// Returns +Infinity as a Float (computed at runtime to avoid literal issues).
-fn float_pos_infinity() -> Float {
-  1.0e308 *. 2.0
+// Returns the maximum representable Float (used in place of +Infinity,
+// which is not representable in Erlang).
+fn float_max() -> Float {
+  1.7976931348623157e308
 }
 
-// Returns -Infinity as a Float (computed at runtime to avoid literal issues).
-fn float_neg_infinity() -> Float {
-  -1.0e308 *. 2.0
+// Returns the minimum representable Float (used in place of -Infinity,
+// which is not representable in Erlang).
+fn float_min() -> Float {
+  -1.7976931348623157e308
 }
 
 fn float_decode_json() -> Decoder(Float) {
@@ -368,8 +370,8 @@ fn float_decode_json() -> Decoder(Float) {
       |> decode.map(fn(s) {
         case s {
           "NaN" -> 0.0
-          "Infinity" -> float_pos_infinity()
-          "-Infinity" -> float_neg_infinity()
+          "Infinity" -> float_max()
+          "-Infinity" -> float_min()
           _ ->
             case float.parse(s) {
               Ok(f) -> f
@@ -404,11 +406,9 @@ fn float32_adapter() -> TypeAdapter(Float) {
         <<240, rest:bits>> ->
           case rest {
             // +Infinity: 0x7F800000 little-endian
-            <<0, 0, 128, 127, remaining:bits>> ->
-              Ok(#(float_pos_infinity(), remaining))
+            <<0, 0, 128, 127, remaining:bits>> -> Ok(#(float_max(), remaining))
             // -Infinity: 0xFF800000 little-endian
-            <<0, 0, 128, 255, remaining:bits>> ->
-              Ok(#(float_neg_infinity(), remaining))
+            <<0, 0, 128, 255, remaining:bits>> -> Ok(#(float_min(), remaining))
             <<v:float-size(32)-little, remaining:bits>> -> Ok(#(v, remaining))
             _ -> Error("truncated float32 data")
           }
@@ -452,10 +452,10 @@ fn float64_adapter() -> TypeAdapter(Float) {
           case rest {
             // +Infinity: 0x7FF0000000000000 little-endian
             <<0, 0, 0, 0, 0, 0, 240, 127, remaining:bits>> ->
-              Ok(#(float_pos_infinity(), remaining))
+              Ok(#(float_max(), remaining))
             // -Infinity: 0xFFF0000000000000 little-endian
             <<0, 0, 0, 0, 0, 0, 240, 255, remaining:bits>> ->
-              Ok(#(float_neg_infinity(), remaining))
+              Ok(#(float_min(), remaining))
             <<v:float-size(64)-little, remaining:bits>> -> Ok(#(v, remaining))
             _ -> Error("truncated float64 data")
           }
