@@ -388,6 +388,9 @@ class GleamSourceFileGenerator {
     this.push(`import skir_client\n`);
     if (hasStructs) {
       this.push(`import struct_serializer\n`);
+      this.push(`import gleam/dynamic/decode\n`);
+      this.push(`import gleam/list\n`);
+      this.push(`import gleam/result\n`);
     }
     if (hasStructs || hasRecursiveEnumVariant) {
       this.push(`import type_descriptor\n`);
@@ -693,6 +696,96 @@ class GleamSourceFileGenerator {
     this.push(
       `recognized_slot_count: ${struct.record.numSlotsInclRemovedNumbers},\n`,
     );
+
+    // Generate decode_dense_json callback
+    const numSlots = struct.record.numSlotsInclRemovedNumbers;
+    const fieldsBySlot = new Map(fieldsByNumber.map((f) => [f.number, f]));
+
+    this.push(`decode_dense_json: fn(arr, keep) {\n`);
+    this.push(`let arr_len = list.length(arr)\n`);
+    for (let slot = 0; slot < numSlots; slot++) {
+      const field = fieldsBySlot.get(slot);
+      const arrIn = slot === 0 ? "arr" : `arr_${slot}`;
+      if (field) {
+        const isHardRec = field.isRecursive === "hard";
+        const varName = toFieldName(field.name.text);
+        const defExpr = typeSpeller.getDefaultExpression(field.type!);
+        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        this.push(
+          `let #(slot_${slot}_dyn, arr_${slot + 1}) = struct_serializer.take_slot(${arrIn})\n`,
+        );
+        if (isHardRec) {
+          this.push(
+            `use ${varName}_rec <- result.try(struct_serializer.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
+          );
+        } else {
+          this.push(
+            `use ${varName} <- result.try(struct_serializer.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+          );
+        }
+      } else {
+        this.push(
+          `let #(_, arr_${slot + 1}) = struct_serializer.take_slot(${arrIn})\n`,
+        );
+      }
+    }
+    const lastArrVar = numSlots === 0 ? "arr" : `arr_${numSlots}`;
+    this.push(
+      `let unrecognized_ = struct_serializer.make_unrecognized_fields_json(${lastArrVar}, arr_len, keep)\n`,
+    );
+    const fieldArgsDense = fieldsByNumber
+      .map((f) => {
+        const varName = toFieldName(f.name.text);
+        return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
+      })
+      .join(", ");
+    const structArgsDense =
+      fieldArgsDense +
+      (fieldsByNumber.length > 0 ? ", " : "") +
+      "unrecognized_:";
+    this.push(`Ok(${typeName}(${structArgsDense}))\n`);
+    this.push(`},\n`);
+
+    // Generate decode_binary callback
+    this.push(`decode_binary: fn(bits, slots_to_fill, keep) {\n`);
+    for (let slot = 0; slot < numSlots; slot++) {
+      const field = fieldsBySlot.get(slot);
+      const bitsIn = slot === 0 ? "bits" : `bits_${slot}`;
+      const bitsOut = `bits_${slot + 1}`;
+      if (field) {
+        const isHardRec = field.isRecursive === "hard";
+        const varName = toFieldName(field.name.text);
+        const defExpr = typeSpeller.getDefaultExpression(field.type!);
+        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        if (isHardRec) {
+          this.push(
+            `use #(${varName}_rec, ${bitsOut}) <- result.try(struct_serializer.decode_binary_field_opt(${bitsIn}, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
+          );
+        } else {
+          this.push(
+            `use #(${varName}, ${bitsOut}) <- result.try(struct_serializer.decode_binary_field(${bitsIn}, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+          );
+        }
+      } else {
+        this.push(
+          `use ${bitsOut} <- result.try(struct_serializer.skip_binary_slot(${bitsIn}, slots_to_fill > ${slot}))\n`,
+        );
+      }
+    }
+    const lastBitsVar = numSlots === 0 ? "bits" : `bits_${numSlots}`;
+    const fieldArgsBin = fieldsByNumber
+      .map((f) => {
+        const varName = toFieldName(f.name.text);
+        return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
+      })
+      .join(", ");
+    const structArgsBin =
+      fieldArgsBin +
+      (fieldsByNumber.length > 0 ? ", " : "") +
+      "unrecognized_: option.None";
+    this.push(`Ok(#(${typeName}(${structArgsBin}), ${lastBitsVar}))\n`);
+    this.push(`},\n`);
+
     this.push(`)\n`);
     this.push(`}\n\n`);
   }

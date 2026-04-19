@@ -523,6 +523,24 @@ pub fn float32_from_json_quoted_string_test() {
   |> should.equal(1.5)
 }
 
+pub fn float32_from_json_infinity_is_max_float_test() {
+  skir_client.from_json(skir_client.float32_serializer(), "\"Infinity\"")
+  |> should.be_ok
+  |> should.equal(1.7976931348623157e308)
+}
+
+pub fn float32_from_json_neg_infinity_is_min_float_test() {
+  skir_client.from_json(skir_client.float32_serializer(), "\"-Infinity\"")
+  |> should.be_ok
+  |> should.equal(-1.7976931348623157e308)
+}
+
+pub fn float32_from_json_nan_is_zero_test() {
+  skir_client.from_json(skir_client.float32_serializer(), "\"NaN\"")
+  |> should.be_ok
+  |> should.equal(0.0)
+}
+
 // =============================================================================
 // float32_serializer — binary encoding
 // =============================================================================
@@ -571,6 +589,40 @@ pub fn float32_binary_round_trip_negative_test() {
   |> skir_client.from_bytes(s, _)
   |> should.be_ok
   |> should.equal(value)
+}
+
+pub fn float32_from_bytes_infinity_is_max_float_test() {
+  // Wire byte 240 + IEEE 754 +Infinity (0x7F800000 little-endian)
+  skir_client.from_bytes(skir_client.float32_serializer(), <<
+    115,
+    107,
+    105,
+    114,
+    240,
+    0,
+    0,
+    128,
+    127,
+  >>)
+  |> should.be_ok
+  |> should.equal(1.7976931348623157e308)
+}
+
+pub fn float32_from_bytes_neg_infinity_is_min_float_test() {
+  // Wire byte 240 + IEEE 754 -Infinity (0xFF800000 little-endian)
+  skir_client.from_bytes(skir_client.float32_serializer(), <<
+    115,
+    107,
+    105,
+    114,
+    240,
+    0,
+    0,
+    128,
+    255,
+  >>)
+  |> should.be_ok
+  |> should.equal(-1.7976931348623157e308)
 }
 
 // =============================================================================
@@ -639,6 +691,24 @@ pub fn float64_from_json_quoted_string_test() {
   |> should.equal(1.5)
 }
 
+pub fn float64_from_json_infinity_is_max_float_test() {
+  skir_client.from_json(skir_client.float64_serializer(), "\"Infinity\"")
+  |> should.be_ok
+  |> should.equal(1.7976931348623157e308)
+}
+
+pub fn float64_from_json_neg_infinity_is_min_float_test() {
+  skir_client.from_json(skir_client.float64_serializer(), "\"-Infinity\"")
+  |> should.be_ok
+  |> should.equal(-1.7976931348623157e308)
+}
+
+pub fn float64_from_json_nan_is_zero_test() {
+  skir_client.from_json(skir_client.float64_serializer(), "\"NaN\"")
+  |> should.be_ok
+  |> should.equal(0.0)
+}
+
 // =============================================================================
 // float64_serializer — binary encoding
 // =============================================================================
@@ -685,6 +755,48 @@ pub fn float64_binary_round_trip_negative_test() {
   |> skir_client.from_bytes(s, _)
   |> should.be_ok
   |> should.equal(value)
+}
+
+pub fn float64_from_bytes_infinity_is_max_float_test() {
+  // Wire byte 241 + IEEE 754 +Infinity (0x7FF0000000000000 little-endian)
+  skir_client.from_bytes(skir_client.float64_serializer(), <<
+    115,
+    107,
+    105,
+    114,
+    241,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    240,
+    127,
+  >>)
+  |> should.be_ok
+  |> should.equal(1.7976931348623157e308)
+}
+
+pub fn float64_from_bytes_neg_infinity_is_min_float_test() {
+  // Wire byte 241 + IEEE 754 -Infinity (0xFFF0000000000000 little-endian)
+  skir_client.from_bytes(skir_client.float64_serializer(), <<
+    115,
+    107,
+    105,
+    114,
+    241,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    240,
+    255,
+  >>)
+  |> should.be_ok
+  |> should.equal(-1.7976931348623157e308)
 }
 
 // =============================================================================

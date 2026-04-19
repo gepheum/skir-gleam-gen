@@ -8,7 +8,7 @@ import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import gleam/string_tree.{type StringTree}
@@ -115,6 +115,132 @@ pub fn field_spec_to_field_adapter(spec: FieldSpec(s, f)) -> FieldAdapter(s) {
   }
 }
 
+// =============================================================================
+// Helpers for generated decode_dense_json / decode_binary callbacks
+// =============================================================================
+
+/// Removes and returns the head of a list, or `None` if empty.
+/// Used by generated `decode_dense_json` lambdas to consume one array slot.
+pub fn take_slot(
+  arr: List(dynamic.Dynamic),
+) -> #(option.Option(dynamic.Dynamic), List(dynamic.Dynamic)) {
+  case arr {
+    [] -> #(None, [])
+    [h, ..t] -> #(Some(h), t)
+  }
+}
+
+/// Decodes one JSON field value from an optional array element.
+/// Returns `default` when the element is absent.
+pub fn decode_json_field(
+  opt_elem: option.Option(dynamic.Dynamic),
+  default: f,
+  keep: Bool,
+  serializer s: serializer.Serializer(f),
+) -> Result(f, String) {
+  case opt_elem {
+    None -> Ok(default)
+    Some(elem) ->
+      case decode.run(elem, s.adapter.decode_json(keep)) {
+        Ok(v) -> Ok(v)
+        Error(errs) ->
+          case errs {
+            [decode.DecodeError(expected:, found:, ..)] ->
+              Error("expected " <> expected <> " but found " <> found)
+            _ -> Error("decode error")
+          }
+      }
+  }
+}
+
+/// Decodes one binary field value.
+/// Returns `#(default, bits)` when the slot is not active (`active=False`).
+pub fn decode_binary_field(
+  bits: BitArray,
+  active: Bool,
+  default: f,
+  keep: Bool,
+  serializer s: serializer.Serializer(f),
+) -> Result(#(f, BitArray), String) {
+  case active {
+    False -> Ok(#(default, bits))
+    True -> s.adapter.decode(bits, keep)
+  }
+}
+
+/// Skips one binary slot if active, otherwise returns bits unchanged.
+pub fn skip_binary_slot(
+  bits: BitArray,
+  active: Bool,
+) -> Result(BitArray, String) {
+  case active {
+    False -> Ok(bits)
+    True -> decode_utils.skip_value(bits)
+  }
+}
+
+/// Creates unrecognized JSON fields data from the remaining array elements.
+/// Returns `None` when `keep=False` or there are no extra elements.
+/// Like `decode_json_field`, but returns `None` when the element is absent.
+/// Used by generated code for hard-recursive fields.
+pub fn decode_json_field_opt(
+  opt_elem: option.Option(dynamic.Dynamic),
+  keep: Bool,
+  serializer s: serializer.Serializer(f),
+) -> Result(option.Option(f), String) {
+  case opt_elem {
+    None -> Ok(None)
+    Some(elem) ->
+      case decode.run(elem, s.adapter.decode_json(keep)) {
+        Ok(v) -> Ok(Some(v))
+        Error(errs) ->
+          case errs {
+            [decode.DecodeError(expected:, found:, ..)] ->
+              Error("expected " <> expected <> " but found " <> found)
+            _ -> Error("decode error")
+          }
+      }
+  }
+}
+
+/// Like `decode_binary_field`, but returns `None` when the slot is inactive.
+/// Used by generated code for hard-recursive fields.
+pub fn decode_binary_field_opt(
+  bits: BitArray,
+  active: Bool,
+  keep: Bool,
+  serializer s: serializer.Serializer(f),
+) -> Result(#(option.Option(f), BitArray), String) {
+  case active {
+    False -> Ok(#(None, bits))
+    True ->
+      case s.adapter.decode(bits, keep) {
+        Ok(#(v, rest)) -> Ok(#(Some(v), rest))
+        Error(e) -> Error(e)
+      }
+  }
+}
+
+pub fn make_unrecognized_fields_json(
+  extra_elements: List(dynamic.Dynamic),
+  arr_len: Int,
+  keep: Bool,
+) -> unrecognized.UnrecognizedFields(s) {
+  case keep && !list.is_empty(extra_elements) {
+    False -> None
+    True -> {
+      let extra_json =
+        "["
+        <> string.join(list.map(extra_elements, dynamic_to_json_string), ",")
+        <> "]"
+      Some(unrecognized.fields_data_from_json(
+        arr_len,
+        bit_array.from_string(extra_json),
+      ))
+    }
+  }
+}
+
 pub fn new_serializer(
   name name: String,
   qualified_name qualified_name: String,
@@ -127,6 +253,10 @@ pub fn new_serializer(
     s,
   removed_numbers removed_numbers: List(Int),
   recognized_slot_count recognized_slot_count: Int,
+  decode_dense_json decode_dense_json: fn(List(dynamic.Dynamic), Bool) ->
+    Result(s, String),
+  decode_binary decode_binary: fn(BitArray, Int, Bool) ->
+    Result(#(s, BitArray), String),
 ) -> serializer.Serializer(s) {
   serializer.make_serializer(
     serializer.make_type_adapter(
@@ -151,7 +281,7 @@ pub fn new_serializer(
               case
                 struct_decode_json(
                   ordered_fields,
-                  recognized_slot_count,
+                  decode_dense_json,
                   d,
                   default,
                 )
@@ -163,8 +293,7 @@ pub fn new_serializer(
               case
                 struct_decode_json_keep(
                   ordered_fields,
-                  set_unrecognized,
-                  recognized_slot_count,
+                  decode_dense_json,
                   d,
                   default,
                 )
@@ -189,6 +318,7 @@ pub fn new_serializer(
           ordered_fields,
           set_unrecognized,
           recognized_slot_count,
+          decode_binary,
           bits,
           default,
           keep_unrecognized,
@@ -308,9 +438,10 @@ fn struct_encode(
 }
 
 fn struct_decode(
-  fields: List(FieldAdapter(s)),
+  _fields: List(FieldAdapter(s)),
   set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
   recognized_slot_count: Int,
+  decode_binary: fn(BitArray, Int, Bool) -> Result(#(s, BitArray), String),
   bits: BitArray,
   s: s,
   keep_unrecognized: Bool,
@@ -324,16 +455,7 @@ fn struct_decode(
             Error(e) -> Error(e)
             Ok(#(slot_count, rest2)) -> {
               let slots_to_fill = int.min(slot_count, recognized_slot_count)
-              case
-                decode_slots(
-                  fields,
-                  s,
-                  0,
-                  slots_to_fill,
-                  rest2,
-                  keep_unrecognized,
-                )
-              {
+              case decode_binary(rest2, slots_to_fill, keep_unrecognized) {
                 Error(e) -> Error(e)
                 Ok(#(s2, rest3)) -> {
                   case slot_count > recognized_slot_count {
@@ -483,12 +605,12 @@ fn append_json_slots(
 
 fn struct_decode_json(
   fields: List(FieldAdapter(s)),
-  recognized_slot_count: Int,
+  decode_dense_json: fn(List(dynamic.Dynamic), Bool) -> Result(s, String),
   d: dynamic.Dynamic,
   s: s,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> from_dense_json(fields, recognized_slot_count, arr, s)
+    Ok(arr) -> decode_dense_json(arr, False)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
         Ok(obj) -> from_readable_json(fields, obj, s)
@@ -499,62 +621,17 @@ fn struct_decode_json(
 
 fn struct_decode_json_keep(
   fields: List(FieldAdapter(s)),
-  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
-  recognized_slot_count: Int,
+  decode_dense_json: fn(List(dynamic.Dynamic), Bool) -> Result(s, String),
   d: dynamic.Dynamic,
   s: s,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) ->
-      from_dense_json_keep(
-        fields,
-        set_unrecognized,
-        recognized_slot_count,
-        arr,
-        s,
-      )
+    Ok(arr) -> decode_dense_json(arr, True)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
         Ok(obj) -> from_readable_json(fields, obj, s)
         Error(_) -> Ok(s)
       }
-  }
-}
-
-fn from_dense_json(
-  fields: List(FieldAdapter(s)),
-  recognized_slot_count: Int,
-  arr: List(dynamic.Dynamic),
-  s: s,
-) -> Result(s, String) {
-  let num_to_fill = int.min(list.length(arr), recognized_slot_count)
-  // fields are sorted by number; walk both lists linearly
-  from_dense_json_loop(fields, arr, 0, num_to_fill, s)
-}
-
-fn from_dense_json_keep(
-  fields: List(FieldAdapter(s)),
-  set_unrecognized: fn(s, unrecognized.UnrecognizedFields(s)) -> s,
-  recognized_slot_count: Int,
-  arr: List(dynamic.Dynamic),
-  s: s,
-) -> Result(s, String) {
-  let arr_len = list.length(arr)
-  let num_to_fill = int.min(arr_len, recognized_slot_count)
-  use s <- result.try(from_dense_json_loop(fields, arr, 0, num_to_fill, s))
-  case arr_len > recognized_slot_count {
-    False -> Ok(s)
-    True -> {
-      let extra = list.drop(arr, recognized_slot_count)
-      let extra_json =
-        "[" <> string.join(list.map(extra, dynamic_to_json_string), ",") <> "]"
-      let data =
-        unrecognized.fields_data_from_json(
-          arr_len,
-          bit_array.from_string(extra_json),
-        )
-      Ok(set_unrecognized(s, Some(data)))
-    }
   }
 }
 
@@ -582,55 +659,6 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
                   }
               }
           }
-      }
-  }
-}
-
-fn from_dense_json_loop(
-  fields: List(FieldAdapter(s)),
-  arr: List(dynamic.Dynamic),
-  pos: Int,
-  limit: Int,
-  s: s,
-) -> Result(s, String) {
-  case fields {
-    [] -> Ok(s)
-    [f, ..rest_fields] ->
-      case f.number >= limit {
-        True -> Ok(s)
-        False -> {
-          let #(elem_opt, arr_rest, new_pos) = advance_to(arr, pos, f.number)
-          case elem_opt {
-            None -> Ok(s)
-            Some(elem) ->
-              case f.decode_json(elem, s) {
-                Error(e) -> Error(e)
-                Ok(new_s) ->
-                  from_dense_json_loop(
-                    rest_fields,
-                    arr_rest,
-                    new_pos,
-                    limit,
-                    new_s,
-                  )
-              }
-          }
-        }
-      }
-  }
-}
-
-fn advance_to(lst: List(a), pos: Int, target: Int) -> #(Option(a), List(a), Int) {
-  case pos >= target {
-    True ->
-      case lst {
-        [] -> #(None, [], pos)
-        [first, ..rest] -> #(Some(first), rest, pos + 1)
-      }
-    False ->
-      case lst {
-        [] -> #(None, [], pos)
-        [_, ..rest] -> advance_to(rest, pos + 1, target)
       }
   }
 }
@@ -704,41 +732,6 @@ fn decode_slot_count(
     250 -> decode_utils.decode_number(rest)
     247 | 248 | 249 -> Ok(#(wire - 246, rest))
     _ -> Error("unexpected wire byte for struct: " <> int.to_string(wire))
-  }
-}
-
-fn decode_slots(
-  fields: List(FieldAdapter(s)),
-  s: s,
-  i: Int,
-  count: Int,
-  bits: BitArray,
-  keep_unrecognized: Bool,
-) -> Result(#(s, BitArray), String) {
-  case i >= count {
-    True -> Ok(#(s, bits))
-    False ->
-      case fields {
-        [f, ..rest_fields] if f.number == i ->
-          case f.decode(bits, s, keep_unrecognized) {
-            Error(e) -> Error(e)
-            Ok(#(new_s, rest)) ->
-              decode_slots(
-                rest_fields,
-                new_s,
-                i + 1,
-                count,
-                rest,
-                keep_unrecognized,
-              )
-          }
-        _ ->
-          case decode_utils.skip_value(bits) {
-            Error(e) -> Error(e)
-            Ok(rest) ->
-              decode_slots(fields, s, i + 1, count, rest, keep_unrecognized)
-          }
-      }
   }
 }
 
