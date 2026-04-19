@@ -28,7 +28,7 @@ export class TypeSpeller {
       case "array":
         return `List(${this.getGleamType(type.item)})`;
       case "optional":
-        return `option.Option(${this.getGleamType(type.other)})`;
+        return `option_.Option(${this.getGleamType(type.other)})`;
       case "primitive": {
         switch (type.primitive) {
           case "bool":
@@ -43,7 +43,7 @@ export class TypeSpeller {
           case "string":
             return "String";
           case "timestamp":
-            return "timestamp.Timestamp";
+            return "timestamp_.Timestamp";
           case "bytes":
             return "BitArray";
         }
@@ -61,23 +61,23 @@ export class TypeSpeller {
       case "primitive": {
         switch (type.primitive) {
           case "bool":
-            return "skir_client.bool_serializer()";
+            return "skir_client_.bool_serializer()";
           case "int32":
-            return "skir_client.int32_serializer()";
+            return "skir_client_.int32_serializer()";
           case "int64":
-            return "skir_client.int64_serializer()";
+            return "skir_client_.int64_serializer()";
           case "hash64":
-            return "skir_client.hash64_serializer()";
+            return "skir_client_.hash64_serializer()";
           case "float32":
-            return "skir_client.float32_serializer()";
+            return "skir_client_.float32_serializer()";
           case "float64":
-            return "skir_client.float64_serializer()";
+            return "skir_client_.float64_serializer()";
           case "timestamp":
-            return "skir_client.timestamp_serializer()";
+            return "skir_client_.timestamp_serializer()";
           case "string":
-            return "skir_client.string_serializer()";
+            return "skir_client_.string_serializer()";
           case "bytes":
-            return "skir_client.bytes_serializer()";
+            return "skir_client_.bytes_serializer()";
         }
         const _: never = type.primitive;
         throw TypeError();
@@ -87,19 +87,19 @@ export class TypeSpeller {
         if (type.key) {
           const keyExtractor = type.key.path.map((p) => p.name.text).join(".");
           return (
-            "skir_client.keyed_list_serializer(\n" +
+            "skir_client_.keyed_list_serializer(\n" +
             itemSerializer +
             ",\n" +
             JSON.stringify(keyExtractor) +
             ",\n)"
           );
         } else {
-          return "skir_client.list_serializer(\n" + itemSerializer + ",\n)";
+          return "skir_client_.list_serializer(\n" + itemSerializer + ",\n)";
         }
       }
       case "optional":
         return (
-          "skir_client.optional_serializer(\n" +
+          "skir_client_.optional_serializer(\n" +
           this.getSerializerExpression(type.other) +
           ",\n)"
         );
@@ -118,7 +118,7 @@ export class TypeSpeller {
       case "array":
         return "[]";
       case "optional":
-        return "option.None";
+        return "option_.None";
       case "primitive": {
         switch (type.primitive) {
           case "bool":
@@ -133,7 +133,7 @@ export class TypeSpeller {
           case "string":
             return '""';
           case "timestamp":
-            return "timestamp.from_unix_seconds_and_nanoseconds(0, 0)";
+            return "timestamp_.from_unix_seconds_and_nanoseconds(0, 0)";
           case "bytes":
             return "<<>>";
         }
@@ -152,18 +152,18 @@ export class TypeSpeller {
       case "primitive": {
         const prim = (
           {
-            bool: "type_descriptor.Bool",
-            int32: "type_descriptor.Int32",
-            int64: "type_descriptor.Int64",
-            hash64: "type_descriptor.Hash64",
-            float32: "type_descriptor.Float32",
-            float64: "type_descriptor.Float64",
-            timestamp: "type_descriptor.Timestamp",
-            string: "type_descriptor.StringType",
-            bytes: "type_descriptor.Bytes",
+            bool: "type_descriptor_.Bool",
+            int32: "type_descriptor_.Int32",
+            int64: "type_descriptor_.Int64",
+            hash64: "type_descriptor_.Hash64",
+            float32: "type_descriptor_.Float32",
+            float64: "type_descriptor_.Float64",
+            timestamp: "type_descriptor_.Timestamp",
+            string: "type_descriptor_.StringType",
+            bytes: "type_descriptor_.Bytes",
           } as const
         )[type.primitive];
-        return `type_descriptor.Primitive(${prim})`;
+        return `type_descriptor_.Primitive(${prim})`;
       }
       case "record": {
         const rec = this.recordMap.get(type.key)!;
@@ -171,16 +171,16 @@ export class TypeSpeller {
           .map((a) => a.name.text)
           .join(".");
         const id = `${rec.modulePath}:${qualifiedName}`;
-        return `type_descriptor.Record(${JSON.stringify(id)})`;
+        return `type_descriptor_.Record(${JSON.stringify(id)})`;
       }
       case "array": {
         const itemSig = this.getTypeSignatureExpression(type.item);
         const keyExtractor =
           type.key?.path.map((p) => p.name.text).join(".") ?? "";
-        return `type_descriptor.Array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
+        return `type_descriptor_.Array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
       }
       case "optional": {
-        return `type_descriptor.Optional(${this.getTypeSignatureExpression(type.other)})`;
+        return `type_descriptor_.Optional(${this.getTypeSignatureExpression(type.other)})`;
       }
     }
   }

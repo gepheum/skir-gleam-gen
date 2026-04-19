@@ -1,4 +1,5 @@
 // TODO: keyed arrays
+// TODO: recrusive fields...
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 // TODO: fix all comments
@@ -50,6 +51,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
 
     // First pass: compute groups and name maps for every module.
     const keyToGroup = new Map<RecordKey, GroupInfo>();
+    const pathToGroup = new Map<string, GroupInfo>(); // .skir module path → GroupInfo
     const allGroups: GroupInfo[] = [];
     const uniqueTypeNames = new Map<RecordKey, string>();
     const allCtorNames = new Map<string, string>();
@@ -61,6 +63,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
       );
       for (const group of groups) {
         allGroups.push(group);
+        pathToGroup.set(module.path, group);
         for (const key of group.keySet) {
           keyToGroup.set(key, group);
         }
@@ -71,7 +74,9 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
     }
 
     // Second pass: generate code for each group.
-    for (const group of allGroups) {
+    for (const module of input.modules) {
+      const group = pathToGroup.get(module.path);
+      if (!group) continue;
       outputFiles.push({
         path: group.outputPath,
         code: new GleamSourceFileGenerator(
@@ -80,6 +85,8 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
           keyToGroup,
           uniqueTypeNames,
           allCtorNames,
+          Object.keys(module.pathToImportedNames),
+          pathToGroup,
         ).generate(),
       });
     }
@@ -279,6 +286,8 @@ class GleamSourceFileGenerator {
     private readonly keyToGroup: ReadonlyMap<RecordKey, GroupInfo>,
     private readonly uniqueTypeNames: ReadonlyMap<RecordKey, string>,
     private readonly ctorNames: ReadonlyMap<string, string>,
+    private readonly importedModulePaths: readonly string[],
+    private readonly pathToGroup: ReadonlyMap<string, GroupInfo>,
   ) {
     // Returns the unique Gleam type name for a given record key.
     const uniqueNameFor = (key: RecordKey): string => {
@@ -363,7 +372,6 @@ class GleamSourceFileGenerator {
   }
 
   private writeImports(): void {
-    const referencedGroups = this.collectReferencedGroups();
     const hasTimestamp = this.groupUsesTimestamp();
     const hasStructs = this.group.records.some(
       (r) => r.record.recordType === "struct",
@@ -380,70 +388,35 @@ class GleamSourceFileGenerator {
         ),
     );
 
-    this.push(`import gleam/option\n`);
+    this.push(`import gleam/option as option_\n`);
     if (hasTimestamp) {
-      this.push(`import gleam/time/timestamp\n`);
+      this.push(`import gleam/time/timestamp as timestamp_\n`);
     }
-    this.push(`import skir_client\n`);
+    this.push(`import skir_client as skir_client_\n`);
     if (hasStructs) {
-      this.push(`import struct_serializer\n`);
-      this.push(`import gleam/dynamic/decode\n`);
-      this.push(`import gleam/list\n`);
-      this.push(`import gleam/result\n`);
+      this.push(`import struct_serializer as struct_serializer_\n`);
+      this.push(`import gleam/dynamic/decode as decode_\n`);
+      this.push(`import gleam/list as list_\n`);
+      this.push(`import gleam/result as result_\n`);
     }
     if (hasStructs || hasRecursiveEnumVariant) {
-      this.push(`import type_descriptor\n`);
+      this.push(`import type_descriptor as type_descriptor_\n`);
     }
     if (hasEnums) {
-      this.push(`import enum_serializer\n`);
+      this.push(`import enum_serializer as enum_serializer_\n`);
     }
-    this.push(`import unrecognized\n`);
+    this.push(`import unrecognized as unrecognized_\n`);
 
-    for (const refGroup of referencedGroups) {
+    const seenGroupAliases = new Set<string>();
+    for (const importedPath of this.importedModulePaths) {
+      const refGroup = this.pathToGroup.get(importedPath);
+      if (!refGroup || refGroup === this.group) continue;
+      if (seenGroupAliases.has(refGroup.alias)) continue;
+      seenGroupAliases.add(refGroup.alias);
       this.push(`import ${refGroup.importPath} as ${refGroup.alias}\n`);
     }
 
     this.push("\n");
-  }
-
-  /**
-   * Collects all GroupInfos referenced by any field in any record of this group,
-   * excluding the group itself.
-   */
-  private collectReferencedGroups(): GroupInfo[] {
-    const seenAliases = new Set<string>();
-    const result: GroupInfo[] = [];
-
-    const visit = (type: ResolvedType): void => {
-      switch (type.kind) {
-        case "primitive":
-          break;
-        case "array":
-          visit(type.item);
-          break;
-        case "optional":
-          visit(type.other);
-          break;
-        case "record": {
-          if (this.group.keySet.has(type.key)) break;
-          const refGroup = this.keyToGroup.get(type.key)!;
-          if (seenAliases.has(refGroup.alias)) break;
-          seenAliases.add(refGroup.alias);
-          result.push(refGroup);
-          break;
-        }
-      }
-    };
-
-    for (const rec of this.group.records) {
-      for (const field of rec.record.fields) {
-        if (field.type) visit(field.type);
-      }
-    }
-    for (const constant of this.group.constants) {
-      if (constant.type) visit(constant.type);
-    }
-    return result;
   }
 
   /**
@@ -487,7 +460,7 @@ class GleamSourceFileGenerator {
       this.push(
         `pub fn ${fnName}() -> ${gleamType} {
 ` +
-          `let assert Ok(v) = skir_client.from_json(
+          `let assert Ok(v) = skir_client_.from_json(
 ` +
           `${serializerExpr},
 ` +
@@ -537,14 +510,16 @@ class GleamSourceFileGenerator {
       this.push(commentify(docToCommentText(field.doc)));
       if (field.isRecursive === "hard") {
         const inner = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}_rec: option.Option(${inner}),\n`);
+        this.push(`${fieldName}_rec: option_.Option(${inner}),\n`);
       } else {
         const gleamType = typeSpeller.getGleamType(field.type!);
         this.push(`${fieldName}: ${gleamType},\n`);
       }
     }
     // Trailing underscore avoids conflict with user-defined fields named `unrecognized`.
-    this.push(`unrecognized_: unrecognized.UnrecognizedFields(${typeName}),\n`);
+    this.push(
+      `unrecognized_: unrecognized_.UnrecognizedFields(${typeName}),\n`,
+    );
     this.push(")\n");
     this.push("}\n\n");
 
@@ -560,8 +535,8 @@ class GleamSourceFileGenerator {
         `pub fn ${fnPrefix}${fieldName}(s: ${typeName}) -> ${innerType} {\n`,
       );
       this.push(`case s.${fieldName}_rec {\n`);
-      this.push(`option.Some(v) -> v\n`);
-      this.push(`option.None -> ${defExpr}\n`);
+      this.push(`option_.Some(v) -> v\n`);
+      this.push(`option_.None -> ${defExpr}\n`);
       this.push("}\n");
       this.push("}\n\n");
     }
@@ -582,13 +557,13 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: option.None,\n`);
+        this.push(`${fieldName}_rec: option_.None,\n`);
       } else {
         const defExpr = typeSpeller.getDefaultExpression(field.type!);
         this.push(`${fieldName}: ${defExpr},\n`);
       }
     }
-    this.push(`unrecognized_: option.None,\n`);
+    this.push(`unrecognized_: option_.None,\n`);
     if (useConstDefault) {
       this.push(")\n\n");
     } else {
@@ -616,12 +591,12 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: option.Some(${fieldName}),\n`);
+        this.push(`${fieldName}_rec: option_.Some(${fieldName}),\n`);
       } else {
         this.push(`${fieldName}: ${fieldName},\n`);
       }
     }
-    this.push(`unrecognized_: option.None,\n`);
+    this.push(`unrecognized_: option_.None,\n`);
     this.push(`)\n`);
     this.push(`}\n\n`);
 
@@ -634,7 +609,7 @@ class GleamSourceFileGenerator {
 
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
     );
     // Hoist non-recursive serializer construction so it is created once and
     // reused in ordered_fields, decode_dense_json, and decode_binary.
@@ -645,7 +620,7 @@ class GleamSourceFileGenerator {
         this.push(`let ${varName}_serializer = ${serExpr}\n`);
       }
     }
-    this.push(`struct_serializer.new_serializer(\n`);
+    this.push(`struct_serializer_.new_serializer(\n`);
     this.push(`name: ${JSON.stringify(struct.record.name.text)},\n`);
     this.push(
       `qualified_name: ${JSON.stringify(struct.recordAncestors.map((r) => r.name.text).join("."))},\n`,
@@ -658,7 +633,7 @@ class GleamSourceFileGenerator {
       const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
       const fieldType = typeSpeller.getGleamType(field.type!);
-      this.push(`struct_serializer.field_spec_to_field_adapter(\n`);
+      this.push(`struct_serializer_.field_spec_to_field_adapter(\n`);
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
@@ -669,7 +644,7 @@ class GleamSourceFileGenerator {
       if (isHardRec) {
         this.push(`get: fn(s: ${typeName}) { ${fnPrefix}${fieldName}(s) },\n`);
         this.push(
-          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: option.Some(v)) },\n`,
+          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: option_.Some(v)) },\n`,
         );
       } else {
         this.push(`get: fn(s: ${typeName}) { s.${fieldName} },\n`);
@@ -678,12 +653,12 @@ class GleamSourceFileGenerator {
         );
       }
       if (isRecursive) {
-        this.push(`serializer: struct_serializer.Lazy(fn() {\n`);
+        this.push(`serializer: struct_serializer_.Lazy(fn() {\n`);
         this.push(`${typeSpeller.getSerializerExpression(field.type!)}\n`);
         this.push(`}),\n`);
       } else {
         this.push(
-          `serializer: struct_serializer.Eager(${fieldName}_serializer),\n`,
+          `serializer: struct_serializer_.Eager(${fieldName}_serializer),\n`,
         );
       }
       this.push(`),\n`);
@@ -711,7 +686,7 @@ class GleamSourceFileGenerator {
     const fieldsBySlot = new Map(fieldsByNumber.map((f) => [f.number, f]));
 
     this.push(`decode_dense_json: fn(arr, keep) {\n`);
-    this.push(`let arr_len = list.length(arr)\n`);
+    this.push(`let arr_len = list_.length(arr)\n`);
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
       if (field) {
@@ -723,25 +698,23 @@ class GleamSourceFileGenerator {
             ? `${varName}_serializer`
             : typeSpeller.getSerializerExpression(field.type!);
         this.push(
-          `let #(slot_${slot}_dyn, arr) = struct_serializer.take_slot(arr)\n`,
+          `let #(slot_${slot}_dyn, arr) = struct_serializer_.take_slot(arr)\n`,
         );
         if (isHardRec) {
           this.push(
-            `use ${varName}_rec <- result.try(struct_serializer.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
+            `use ${varName}_rec <- result_.try(struct_serializer_.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
           );
         } else {
           this.push(
-            `use ${varName} <- result.try(struct_serializer.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+            `use ${varName} <- result_.try(struct_serializer_.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
           );
         }
       } else {
-        this.push(
-          `let #(_, arr) = struct_serializer.take_slot(arr)\n`,
-        );
+        this.push(`let #(_, arr) = struct_serializer_.take_slot(arr)\n`);
       }
     }
     this.push(
-      `let unrecognized_ = struct_serializer.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
+      `let unrecognized_ = struct_serializer_.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
     );
     const fieldArgsDense = fieldsByNumber
       .map((f) => {
@@ -770,16 +743,16 @@ class GleamSourceFileGenerator {
             : typeSpeller.getSerializerExpression(field.type!);
         if (isHardRec) {
           this.push(
-            `use #(${varName}_rec, bits) <- result.try(struct_serializer.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
+            `use #(${varName}_rec, bits) <- result_.try(struct_serializer_.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
           );
         } else {
           this.push(
-            `use #(${varName}, bits) <- result.try(struct_serializer.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+            `use #(${varName}, bits) <- result_.try(struct_serializer_.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
           );
         }
       } else {
         this.push(
-          `use bits <- result.try(struct_serializer.skip_binary_slot(bits, slots_to_fill > ${slot}))\n`,
+          `use bits <- result_.try(struct_serializer_.skip_binary_slot(bits, slots_to_fill > ${slot}))\n`,
         );
       }
     }
@@ -792,7 +765,7 @@ class GleamSourceFileGenerator {
     const structArgsBin =
       fieldArgsBin +
       (fieldsByNumber.length > 0 ? ", " : "") +
-      "unrecognized_: option.None";
+      "unrecognized_: option_.None";
     this.push(`Ok(#(${typeName}(${structArgsBin}), bits))\n`);
     this.push(`},\n`);
 
@@ -825,7 +798,7 @@ class GleamSourceFileGenerator {
     // user-defined variant named "unknown"; this is documented as reserved.
     this.push(`pub type ${typeName} {\n`);
     this.push(
-      `${unknownCtorName}(unrecognized.UnrecognizedVariant(${typeName}))\n`,
+      `${unknownCtorName}(unrecognized_.UnrecognizedVariant(${typeName}))\n`,
     );
     for (const variant of variants) {
       const ctorName =
@@ -844,15 +817,15 @@ class GleamSourceFileGenerator {
     // Default const — an enum defaults to the Unknown variant.
     this.push(`/// The default \`${typeName}\` (the unknown variant).\n`);
     this.push(
-      `pub const ${fnPrefix}unknown = ${unknownCtorName}(option.None)\n\n`,
+      `pub const ${fnPrefix}unknown = ${unknownCtorName}(option_.None)\n\n`,
     );
 
     // Serializer.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> skir_client.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
     );
-    this.push(`enum_serializer.new_serializer(\n`);
+    this.push(`enum_serializer_.new_serializer(\n`);
     this.push(`name: ${JSON.stringify(record.record.name.text)},\n`);
     this.push(
       `qualified_name: ${JSON.stringify(record.recordAncestors.map((r) => r.name.text).join("."))},\n`,
@@ -866,7 +839,7 @@ class GleamSourceFileGenerator {
         typeName + convertCase(variant.name.text, "UpperCamel");
       if (!variant.type) {
         // Constant variant.
-        this.push(`enum_serializer.constant_variant(\n`);
+        this.push(`enum_serializer_.constant_variant(\n`);
         this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
         this.push(`number: ${variant.number},\n`);
         this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
@@ -878,7 +851,7 @@ class GleamSourceFileGenerator {
         const vType = variant.type!;
         const isDirectSelfRef =
           vType.kind === "record" && vType.key === record.record.key;
-        this.push(`enum_serializer.wrapper_variant(\n`);
+        this.push(`enum_serializer_.wrapper_variant(\n`);
         this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
         this.push(`number: ${variant.number},\n`);
         this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
@@ -887,10 +860,10 @@ class GleamSourceFileGenerator {
         this.push(`},\n`);
         if (isDirectSelfRef) {
           this.push(
-            `type_sig: option.Some(${typeSpeller.getTypeSignatureExpression(vType)}),\n`,
+            `type_sig: option_.Some(${typeSpeller.getTypeSignatureExpression(vType)}),\n`,
           );
         } else {
-          this.push(`type_sig: option.None,\n`);
+          this.push(`type_sig: option_.None,\n`);
         }
         this.push(`wrap: fn(v) { ${ctorName}(v) },\n`);
         this.push(`unwrap: fn(e) { let assert ${ctorName}(v) = e\n v },\n`);
@@ -917,7 +890,7 @@ class GleamSourceFileGenerator {
     this.push(`case e {\n`);
     this.push(`${unknownCtorName}(u) -> u\n`);
     if (variants.length > 0) {
-      this.push(`_ -> option.None\n`);
+      this.push(`_ -> option_.None\n`);
     }
     this.push(`}\n`);
     this.push(`},\n`);
