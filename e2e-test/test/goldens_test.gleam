@@ -5,6 +5,7 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
+import serializer.{Drop, Keep}
 import skir_client
 import skirout/gepheum/skir_golden_tests/goldens
 
@@ -39,7 +40,7 @@ fn make_ev(value: a, serializer: skir_client.Serializer(a)) -> EvaluatedValue {
         skir_client.from_json_with_options(
           serializer,
           json,
-          keep_unrecognized_values: True,
+          keep_unrecognized_values: Keep,
         )
       {
         Ok(v) -> Ok(make_ev(v, serializer))
@@ -167,7 +168,7 @@ fn evaluate_typed_value(
       skir_client.from_json_with_options(
         goldens.point_serializer(),
         json,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromJsonKeepUnrecognized: " <> e })
@@ -183,7 +184,7 @@ fn evaluate_typed_value(
       skir_client.from_bytes_with_options(
         goldens.point_serializer(),
         bytes,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromBytesKeepUnrecognized: " <> e })
@@ -199,7 +200,7 @@ fn evaluate_typed_value(
       skir_client.from_json_with_options(
         goldens.color_serializer(),
         json,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromJsonKeepUnrecognized: " <> e })
@@ -215,7 +216,7 @@ fn evaluate_typed_value(
       skir_client.from_bytes_with_options(
         goldens.color_serializer(),
         bytes,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromBytesKeepUnrecognized: " <> e })
@@ -231,7 +232,7 @@ fn evaluate_typed_value(
       skir_client.from_json_with_options(
         goldens.my_enum_serializer(),
         json,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromJsonKeepUnrecognized: " <> e })
@@ -247,7 +248,7 @@ fn evaluate_typed_value(
       skir_client.from_bytes_with_options(
         goldens.my_enum_serializer(),
         bytes,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromBytesKeepUnrecognized: " <> e })
@@ -263,7 +264,7 @@ fn evaluate_typed_value(
       skir_client.from_json_with_options(
         goldens.enum_a_serializer(),
         json,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromJsonKeepUnrecognized: " <> e })
@@ -279,7 +280,7 @@ fn evaluate_typed_value(
       skir_client.from_bytes_with_options(
         goldens.enum_a_serializer(),
         bytes,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromBytesKeepUnrecognized: " <> e })
@@ -295,7 +296,7 @@ fn evaluate_typed_value(
       skir_client.from_json_with_options(
         goldens.enum_b_serializer(),
         json,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromJsonKeepUnrecognized: " <> e })
@@ -311,7 +312,7 @@ fn evaluate_typed_value(
       skir_client.from_bytes_with_options(
         goldens.enum_b_serializer(),
         bytes,
-        keep_unrecognized_values: True,
+        keep_unrecognized_values: Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromBytesKeepUnrecognized: " <> e })
@@ -460,7 +461,7 @@ fn verify_reserialize_value(
             skir_client.from_bytes_with_options(
               goldens.point_serializer(),
               buf,
-              keep_unrecognized_values: False,
+              keep_unrecognized_values: Drop,
             )
           {
             Error(e) ->
@@ -908,7 +909,10 @@ fn verify_enum_a_from_json_is_constant(
     skir_client.from_json_with_options(
       goldens.enum_a_serializer(),
       actual,
-      keep_unrecognized_values: a.keep_unrecognized,
+      keep_unrecognized_values: case a.keep_unrecognized {
+        True -> Keep
+        False -> Drop
+      },
     )
   {
     Error(e) -> Error("enum_a_from_json_is_constant parse error: " <> e)
@@ -933,7 +937,10 @@ fn verify_enum_a_from_bytes_is_constant(
     skir_client.from_bytes_with_options(
       goldens.enum_a_serializer(),
       actual,
-      keep_unrecognized_values: a.keep_unrecognized,
+      keep_unrecognized_values: case a.keep_unrecognized {
+        True -> Keep
+        False -> Drop
+      },
     )
   {
     Error(e) -> Error("enum_a_from_bytes_is_constant parse error: " <> e)
@@ -958,7 +965,10 @@ fn verify_enum_b_from_json_is_wrapper_b(
     skir_client.from_json_with_options(
       goldens.enum_b_serializer(),
       actual,
-      keep_unrecognized_values: a.keep_unrecognized,
+      keep_unrecognized_values: case a.keep_unrecognized {
+        True -> Keep
+        False -> Drop
+      },
     )
   {
     Error(e) -> Error("enum_b_from_json_is_wrapper_b parse error: " <> e)
@@ -985,7 +995,10 @@ fn verify_enum_b_from_bytes_is_wrapper_b(
     skir_client.from_bytes_with_options(
       goldens.enum_b_serializer(),
       actual,
-      keep_unrecognized_values: a.keep_unrecognized,
+      keep_unrecognized_values: case a.keep_unrecognized {
+        True -> Keep
+        False -> Drop
+      },
     )
   {
     Error(e) -> Error("enum_b_from_bytes_is_wrapper_b parse error: " <> e)

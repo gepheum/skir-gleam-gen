@@ -11,7 +11,8 @@ import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp.{type Timestamp}
 import serializer.{
-  type Serializer, type TypeAdapter, TypeAdapter, get_adapter, make_serializer,
+  type Serializer, type TypeAdapter, type UnrecognizedValues, TypeAdapter,
+  get_adapter, make_serializer,
 }
 import type_descriptor
 
@@ -991,12 +992,12 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
         Some(x) -> item.encode(x, bytes_tree.append(acc, <<1>>))
       }
     },
-    decode: fn(bits, strict) {
+    decode: fn(bits, keep) {
       case bits {
         <<0, rest:bits>> -> Ok(#(None, rest))
         <<255, rest:bits>> -> Ok(#(None, rest))
         <<1, rest:bits>> ->
-          case item.decode(rest, strict) {
+          case item.decode(rest, keep) {
             Ok(#(x, remaining)) -> Ok(#(Some(x), remaining))
             Error(e) -> Error(e)
           }
@@ -1062,10 +1063,10 @@ fn list_adapter(
         item.encode(item_val, bytes_acc)
       })
     },
-    decode: fn(bits, strict) {
+    decode: fn(bits, keep) {
       case decode_list_count(bits) {
         Error(e) -> Error(e)
-        Ok(#(count, rest)) -> decode_list_items(item, count, rest, strict, [])
+        Ok(#(count, rest)) -> decode_list_items(item, count, rest, keep, [])
       }
     },
     type_descriptor: fn() {
@@ -1173,16 +1174,16 @@ fn decode_list_items(
   item: TypeAdapter(a),
   count: Int,
   bits: BitArray,
-  strict: Bool,
+  keep: UnrecognizedValues,
   acc: List(a),
 ) -> Result(#(List(a), BitArray), String) {
   case count {
     0 -> Ok(#(list_reverse(acc), bits))
     _ ->
-      case item.decode(bits, strict) {
+      case item.decode(bits, keep) {
         Error(e) -> Error(e)
         Ok(#(v, rest)) ->
-          decode_list_items(item, count - 1, rest, strict, [v, ..acc])
+          decode_list_items(item, count - 1, rest, keep, [v, ..acc])
       }
   }
 }

@@ -17,6 +17,15 @@ pub type TypeAdapter(a) =
 pub type Serializer(a) =
   serializer.Serializer(a)
 
+pub type UnrecognizedValues =
+  serializer.UnrecognizedValues
+
+/// Preserve unrecognized fields/variants for round-tripping.
+pub const keep_unrecognized: UnrecognizedValues = serializer.Keep
+
+/// Discard unrecognized fields/variants.
+pub const drop_unrecognized: UnrecognizedValues = serializer.Drop
+
 // Re-export TypeDescriptor and related types so callers can
 // import them from this module.
 pub type PrimitiveType =
@@ -49,9 +58,10 @@ pub type EnumVariant =
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  decode_json decode_json: fn(Bool) -> Decoder(a),
+  decode_json decode_json: fn(UnrecognizedValues) -> Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
-  decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
+  decode decode: fn(BitArray, UnrecognizedValues) ->
+    Result(#(a, BitArray), String),
   type_descriptor type_descriptor: fn() -> TypeDescriptor,
 ) -> TypeAdapter(a) {
   serializer.make_type_adapter(
@@ -93,7 +103,7 @@ pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
 pub fn from_json_with_options(
   serializer: Serializer(a),
   json: String,
-  keep_unrecognized_values keep_unrecognized_values: Bool,
+  keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
 ) -> Result(a, String) {
   serializer.from_json_with_options(serializer, json, keep_unrecognized_values:)
 }
@@ -115,7 +125,7 @@ pub fn from_bytes(
 pub fn from_bytes_with_options(
   serializer: Serializer(a),
   bytes: BitArray,
-  keep_unrecognized_values keep_unrecognized_values: Bool,
+  keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
 ) -> Result(a, String) {
   serializer.from_bytes_with_options(
     serializer,

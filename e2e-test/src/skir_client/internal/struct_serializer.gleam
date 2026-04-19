@@ -11,7 +11,7 @@ import gleam/list
 import gleam/option
 import gleam/string
 import gleam/string_tree.{type StringTree}
-import serializer
+import serializer.{type UnrecognizedValues, Drop, Keep}
 import skir_client/internal/unrecognized
 import type_descriptor
 
@@ -71,9 +71,10 @@ pub type FieldAdapter(s) {
     doc: String,
     is_default: fn(s) -> Bool,
     append_json: fn(s, StringTree, String) -> StringTree,
-    decode_json: fn(dynamic.Dynamic, s) -> Result(s, String),
+    decode_json: fn(dynamic.Dynamic, s, UnrecognizedValues) -> Result(s, String),
     encode: fn(s, BytesTree) -> BytesTree,
-    decode: fn(BitArray, s, Bool) -> Result(#(s, BitArray), String),
+    decode: fn(BitArray, s, UnrecognizedValues) ->
+      Result(#(s, BitArray), String),
     type_descriptor: fn() -> type_descriptor.TypeDescriptor,
   )
 }
@@ -99,8 +100,8 @@ pub fn field_spec_to_field_adapter(
         append_json: fn(acc, tree, eol_indent) {
           ta.append_json(get(acc), tree, eol_indent)
         },
-        decode_json: fn(d, acc) {
-          case decode.run(d, ta.decode_json(False)) {
+        decode_json: fn(d, acc, keep) {
+          case decode.run(d, ta.decode_json(keep)) {
             Ok(f_val) -> Ok(set(acc, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
@@ -126,8 +127,8 @@ pub fn field_spec_to_field_adapter(
         append_json: fn(acc, tree, eol_indent) {
           f().adapter.append_json(get(acc), tree, eol_indent)
         },
-        decode_json: fn(d, acc) {
-          case decode.run(d, f().adapter.decode_json(False)) {
+        decode_json: fn(d, acc, keep) {
+          case decode.run(d, f().adapter.decode_json(keep)) {
             Ok(f_val) -> Ok(set(acc, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
@@ -171,7 +172,7 @@ pub fn take_slot(
 pub fn decode_json_field(
   opt_elem: option.Option(dynamic.Dynamic),
   default: f,
-  keep: Bool,
+  keep: UnrecognizedValues,
   serializer s: serializer.Serializer(f),
 ) -> Result(f, String) {
   case opt_elem {
@@ -195,7 +196,7 @@ pub fn decode_binary_field(
   bits: BitArray,
   active: Bool,
   default: f,
-  keep: Bool,
+  keep: UnrecognizedValues,
   serializer s: serializer.Serializer(f),
 ) -> Result(#(f, BitArray), String) {
   case active {
@@ -221,7 +222,7 @@ pub fn skip_binary_slot(
 /// Used by generated code for hard-recursive fields.
 pub fn decode_json_field_opt(
   opt_elem: option.Option(dynamic.Dynamic),
-  keep: Bool,
+  keep: UnrecognizedValues,
   serializer s: serializer.Serializer(f),
 ) -> Result(option.Option(f), String) {
   case opt_elem {
@@ -244,7 +245,7 @@ pub fn decode_json_field_opt(
 pub fn decode_binary_field_opt(
   bits: BitArray,
   active: Bool,
-  keep: Bool,
+  keep: UnrecognizedValues,
   serializer s: serializer.Serializer(f),
 ) -> Result(#(option.Option(f), BitArray), String) {
   case active {
@@ -260,17 +261,24 @@ pub fn decode_binary_field_opt(
 pub fn make_unrecognized_fields_json(
   extra_elements: List(dynamic.Dynamic),
   arr_len: Int,
-  keep: Bool,
+  keep: UnrecognizedValues,
 ) -> UnrecognizedFields(s) {
-  case keep && !list.is_empty(extra_elements) {
-    False -> None
-    True -> {
-      let extra_json =
-        "["
-        <> string.join(list.map(extra_elements, dynamic_to_json_string), ",")
-        <> "]"
-      Some(fields_data_from_json(arr_len, bit_array.from_string(extra_json)))
-    }
+  case keep {
+    Drop -> None
+    Keep ->
+      case extra_elements {
+        [] -> None
+        _ -> {
+          let extra_json =
+            "["
+            <> string.join(
+              list.map(extra_elements, dynamic_to_json_string),
+              ",",
+            )
+            <> "]"
+          Some(fields_data_from_json(arr_len, bit_array.from_string(extra_json)))
+        }
+      }
   }
 }
 
@@ -285,9 +293,12 @@ pub fn new_serializer(
   set_unrecognized set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   removed_numbers removed_numbers: List(Int),
   recognized_slot_count recognized_slot_count: Int,
-  decode_dense_json decode_dense_json: fn(List(dynamic.Dynamic), Bool) ->
+  decode_dense_json decode_dense_json: fn(
+    List(dynamic.Dynamic),
+    UnrecognizedValues,
+  ) ->
     Result(s, String),
-  decode_binary decode_binary: fn(BitArray, Int, Bool) ->
+  decode_binary decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
     Result(#(s, BitArray), String),
 ) -> serializer.Serializer(s) {
   serializer.make_serializer(
@@ -309,7 +320,7 @@ pub fn new_serializer(
         decode.dynamic
         |> decode.then(fn(d) {
           case keep {
-            False ->
+            Drop ->
               case
                 struct_decode_json(
                   ordered_fields,
@@ -321,7 +332,7 @@ pub fn new_serializer(
                 Ok(s) -> decode.success(s)
                 Error(msg) -> decode.failure(default, msg)
               }
-            True ->
+            Keep ->
               case
                 struct_decode_json_keep(
                   ordered_fields,
@@ -469,10 +480,11 @@ fn struct_decode(
   _fields: List(FieldAdapter(s)),
   set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   recognized_slot_count: Int,
-  decode_binary: fn(BitArray, Int, Bool) -> Result(#(s, BitArray), String),
+  decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
+    Result(#(s, BitArray), String),
   bits: BitArray,
   s: s,
-  keep_unrecognized: Bool,
+  keep_unrecognized: UnrecognizedValues,
 ) -> Result(#(s, BitArray), String) {
   case bits {
     <<wire, rest:bits>> ->
@@ -491,7 +503,7 @@ fn struct_decode(
                     True -> {
                       let extra = slot_count - recognized_slot_count
                       case keep_unrecognized {
-                        True ->
+                        Keep ->
                           capture_unrecognized_bytes(
                             set_unrecognized,
                             s2,
@@ -499,7 +511,7 @@ fn struct_decode(
                             extra,
                             rest3,
                           )
-                        False ->
+                        Drop ->
                           case decode_utils.skip_n_values(extra, rest3) {
                             Error(e) -> Error(e)
                             Ok(remaining) -> Ok(#(s2, remaining))
@@ -633,15 +645,16 @@ fn append_json_slots(
 
 fn struct_decode_json(
   fields: List(FieldAdapter(s)),
-  decode_dense_json: fn(List(dynamic.Dynamic), Bool) -> Result(s, String),
+  decode_dense_json: fn(List(dynamic.Dynamic), UnrecognizedValues) ->
+    Result(s, String),
   d: dynamic.Dynamic,
   s: s,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> decode_dense_json(arr, False)
+    Ok(arr) -> decode_dense_json(arr, Drop)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
-        Ok(obj) -> from_readable_json(fields, obj, s)
+        Ok(obj) -> from_readable_json(fields, obj, s, Drop)
         Error(_) -> Ok(s)
       }
   }
@@ -649,15 +662,16 @@ fn struct_decode_json(
 
 fn struct_decode_json_keep(
   fields: List(FieldAdapter(s)),
-  decode_dense_json: fn(List(dynamic.Dynamic), Bool) -> Result(s, String),
+  decode_dense_json: fn(List(dynamic.Dynamic), UnrecognizedValues) ->
+    Result(s, String),
   d: dynamic.Dynamic,
   s: s,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> decode_dense_json(arr, True)
+    Ok(arr) -> decode_dense_json(arr, Keep)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
-        Ok(obj) -> from_readable_json(fields, obj, s)
+        Ok(obj) -> from_readable_json(fields, obj, s, Keep)
         Error(_) -> Ok(s)
       }
   }
@@ -695,11 +709,12 @@ fn from_readable_json(
   fields: List(FieldAdapter(s)),
   obj: dict.Dict(String, dynamic.Dynamic),
   s: s,
+  keep: UnrecognizedValues,
 ) -> Result(s, String) {
   list_fold_result(fields, s, fn(acc, f) {
     case dict.get(obj, f.name) {
       Error(_) -> Ok(acc)
-      Ok(v) -> f.decode_json(v, acc)
+      Ok(v) -> f.decode_json(v, acc, keep)
     }
   })
 }

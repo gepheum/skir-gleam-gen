@@ -6,6 +6,19 @@ import gleam/string_tree.{type StringTree}
 import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
+// UnrecognizedValues
+// =============================================================================
+
+/// Controls whether unrecognized fields/variants encountered during
+/// deserialization are preserved for round-tripping.
+pub type UnrecognizedValues {
+  /// Preserve unrecognized fields/variants so they survive a round-trip.
+  Keep
+  /// Discard unrecognized fields/variants.
+  Drop
+}
+
+// =============================================================================
 // TypeAdapter
 // =============================================================================
 
@@ -15,12 +28,12 @@ pub type TypeAdapter(a) {
   TypeAdapter(
     is_default: fn(a) -> Bool,
     append_json: fn(a, StringTree, String) -> StringTree,
-    /// Returns a JSON decoder. When the `Bool` argument is `True`, the decoder
-    /// preserves unrecognized fields/variants (keep mode). When `False`, it
-    /// drops them. For primitive types the argument is ignored.
-    decode_json: fn(Bool) -> Decoder(a),
+    /// Returns a JSON decoder. When the argument is `Keep`, the decoder
+    /// preserves unrecognized fields/variants. When `Drop`, it discards them.
+    /// For primitive types the argument is ignored.
+    decode_json: fn(UnrecognizedValues) -> Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
-    decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
+    decode: fn(BitArray, UnrecognizedValues) -> Result(#(a, BitArray), String),
     type_descriptor: fn() -> TypeDescriptor,
   )
 }
@@ -30,9 +43,10 @@ pub type TypeAdapter(a) {
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   append_json append_json: fn(a, StringTree, String) -> StringTree,
-  decode_json decode_json: fn(Bool) -> Decoder(a),
+  decode_json decode_json: fn(UnrecognizedValues) -> Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
-  decode decode: fn(BitArray, Bool) -> Result(#(a, BitArray), String),
+  decode decode: fn(BitArray, UnrecognizedValues) ->
+    Result(#(a, BitArray), String),
   type_descriptor type_descriptor: fn() -> TypeDescriptor,
 ) -> TypeAdapter(a) {
   TypeAdapter(
@@ -92,21 +106,21 @@ pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  case json.parse(from: json, using: serializer.adapter.decode_json(False)) {
+  case json.parse(from: json, using: serializer.adapter.decode_json(Drop)) {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
 }
 
 /// Deserializes a value from a JSON string.
-/// When `keep_unrecognized_values` is `True`, field data that this client
+/// When `keep_unrecognized_values` is `Keep`, field data that this client
 /// does not recognise is preserved in `unrecognized_fields_` so that
 /// re-serializing the value does not silently discard forward-compatible
 /// fields.
 pub fn from_json_with_options(
   serializer: Serializer(a),
   json: String,
-  keep_unrecognized_values keep_unrecognized_values: Bool,
+  keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
 ) -> Result(a, String) {
   case
     json.parse(
@@ -133,16 +147,16 @@ pub fn from_bytes(
   serializer: Serializer(a),
   bytes: BitArray,
 ) -> Result(a, String) {
-  from_bytes_with_options(serializer, bytes, False)
+  from_bytes_with_options(serializer, bytes, Drop)
 }
 
 /// Deserializes a value from binary format.
-/// When `keep_unrecognized_values` is `True`, field data that this client
+/// When `keep_unrecognized_values` is `Keep`, field data that this client
 /// does not recognise is preserved in `unrecognized_fields_`.
 pub fn from_bytes_with_options(
   serializer: Serializer(a),
   bytes: BitArray,
-  keep_unrecognized_values keep_unrecognized_values: Bool,
+  keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
 ) -> Result(a, String) {
   case bytes {
     <<115, 107, 105, 114, rest:bits>> ->
@@ -154,7 +168,7 @@ pub fn from_bytes_with_options(
       case bit_array.to_string(bytes) {
         Ok(s) ->
           case
-            json.parse(from: s, using: serializer.adapter.decode_json(False))
+            json.parse(from: s, using: serializer.adapter.decode_json(Drop))
           {
             Ok(v) -> Ok(v)
             Error(e) -> Error(json_decode_error_to_string(e))
