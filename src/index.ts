@@ -53,18 +53,16 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
     // First pass: compute groups and name maps for every module.
     const keyToGroup = new Map<RecordKey, GroupInfo>();
     const pathToGroup = new Map<string, GroupInfo>(); // .skir module path → GroupInfo
-    const allGroups: GroupInfo[] = [];
     const uniqueTypeNames = new Map<RecordKey, string>();
     const allCtorNames = new Map<string, string>();
     for (const module of input.modules) {
-      const groups = computeGroupsForModule(
+      const group = computeGroupForModule(
         module.records,
         module.constants as readonly Constant<false>[],
         module.methods as readonly Method<false>[],
         module.path,
       );
-      for (const group of groups) {
-        allGroups.push(group);
+      if (group) {
         pathToGroup.set(module.path, group);
         for (const key of group.keySet) {
           keyToGroup.set(key, group);
@@ -78,7 +76,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
     // Second pass: generate code for each group.
     for (const module of input.modules) {
       const group = pathToGroup.get(module.path);
-      if (!group) continue;
+      if (group === undefined) continue;
       outputFiles.push({
         path: group.outputPath,
         code: new GleamSourceFileGenerator(
@@ -98,36 +96,35 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
 }
 
 /**
- * Returns a single GroupInfo containing all symbols from the given Skir module.
+ * Returns a single GroupInfo containing all symbols from the given Skir module,
+ * or undefined if the module has no symbols.
  * All types from one .skir file are co-located in one Gleam module.
  */
-function computeGroupsForModule(
+function computeGroupForModule(
   records: readonly RecordLocation[],
   constants: readonly Constant<false>[] = [],
   methods: readonly Method<false>[] = [],
   modulePath?: string,
-): GroupInfo[] {
+): GroupInfo | undefined {
   if (records.length === 0 && constants.length === 0 && methods.length === 0)
-    return [];
+    return undefined;
   let moduleDir: string;
   if (records.length > 0) {
     moduleDir = getModuleDir(records[0]!.modulePath);
   } else if (modulePath) {
     moduleDir = getModuleDir(modulePath);
   } else {
-    return [];
+    return undefined;
   }
-  return [
-    {
-      records: [...records],
-      constants: [...constants],
-      methods: [...methods],
-      outputPath: `${moduleDir}.gleam`,
-      importPath: `skirout/${moduleDir}`,
-      alias: moduleDir.replace(/\//g, "__") + "_",
-      keySet: new Set(records.map((r) => r.record.key)),
-    },
-  ];
+  return {
+    records: [...records],
+    constants: [...constants],
+    methods: [...methods],
+    outputPath: `${moduleDir}.gleam`,
+    importPath: `skirout/${moduleDir}`,
+    alias: moduleDir.replace(/\//g, "__") + "_",
+    keySet: new Set(records.map((r) => r.record.key)),
+  };
 }
 
 /**
@@ -483,11 +480,8 @@ class GleamSourceFileGenerator {
 
   private structValueToGleamExpr(value: Value, record: RecordLocation): string {
     if (value.kind !== "object") throw new Error("Expected object for struct");
-    const typeName =
-      this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
-    const prefix = this.group.keySet.has(record.record.key)
-      ? ""
-      : `${this.keyToGroup.get(record.record.key)!.alias}.`;
+    const typeName = this.typeNameFor(record);
+    const prefix = this.qualifiedPrefixFor(record);
     this.neededModules.add("skir_client/internal/struct_serializer");
     // Sort fields alphabetically to match the generated type definition.
     const fields = [...record.record.fields].sort((a, b) =>
@@ -523,20 +517,14 @@ class GleamSourceFileGenerator {
   }
 
   private enumValueToGleamExpr(value: Value, record: RecordLocation): string {
-    const prefix = this.group.keySet.has(record.record.key)
-      ? ""
-      : `${this.keyToGroup.get(record.record.key)!.alias}.`;
+    const prefix = this.qualifiedPrefixFor(record);
     if (value.kind === "literal") {
       // A string literal naming a constant (no-payload) variant.
       const valueType = value.type;
       if (!valueType || valueType.kind !== "enum") {
         // The UNKNOWN variant is not assigned a type by the compiler.
         // Reference the pre-generated "unknown" default const.
-        const fnPrefix =
-          record.recordAncestors
-            .map((a) => convertCase(a.name.text, "lower_underscore"))
-            .join("__") + "_";
-        return `${prefix}${fnPrefix}unknown`;
+        return `${prefix}${this.fnPrefixFor(record)}unknown`;
       }
       const ctorName =
         this.ctorNames.get(
@@ -609,12 +597,8 @@ class GleamSourceFileGenerator {
     this.neededModules.add("gleam/list");
     this.neededModules.add("gleam/result");
     const { typeSpeller } = this;
-    const typeName =
-      this.uniqueTypeNames.get(struct.record.key) ?? getTypeName(struct);
-    const fnPrefix =
-      struct.recordAncestors
-        .map((a) => convertCase(a.name.text, "lower_underscore"))
-        .join("__") + "_";
+    const typeName = this.typeNameFor(struct);
+    const fnPrefix = this.fnPrefixFor(struct);
     // Sort fields by name for consistent output.
     const fields = [...struct.record.fields].sort((a, b) =>
       a.name.text.localeCompare(b.name.text),
@@ -839,14 +823,8 @@ class GleamSourceFileGenerator {
     this.push(
       `let unrecognized_ = struct_serializer_.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
     );
-    const fieldArgsDense = fieldsByNumber
-      .map((f) => {
-        const varName = toFieldName(f.name.text);
-        return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
-      })
-      .join(", ");
     const structArgsDense =
-      fieldArgsDense +
+      fieldArgsWithRecSuffix(fieldsByNumber) +
       (fieldsByNumber.length > 0 ? ", " : "") +
       "unrecognized_:";
     this.push(`Ok(${typeName}(${structArgsDense}))\n`);
@@ -885,14 +863,8 @@ class GleamSourceFileGenerator {
         );
       }
     }
-    const fieldArgsBin = fieldsByNumber
-      .map((f) => {
-        const varName = toFieldName(f.name.text);
-        return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
-      })
-      .join(", ");
     const structArgsBin =
-      fieldArgsBin +
+      fieldArgsWithRecSuffix(fieldsByNumber) +
       (fieldsByNumber.length > 0 ? ", " : "") +
       "unrecognized_: struct_serializer_.None";
     this.push(`Ok(#(${typeName}(${structArgsBin}), bits))\n`);
@@ -906,12 +878,8 @@ class GleamSourceFileGenerator {
     this.neededModules.add("skir_client");
     this.neededModules.add("skir_client/internal/enum_serializer");
     const { typeSpeller } = this;
-    const typeName =
-      this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
-    const fnPrefix =
-      record.recordAncestors
-        .map((a) => convertCase(a.name.text, "lower_underscore"))
-        .join("__") + "_";
+    const typeName = this.typeNameFor(record);
+    const fnPrefix = this.fnPrefixFor(record);
     const unknownCtorName =
       this.ctorNames.get(`${record.record.key}:__unknown__`) ??
       typeName + "Unknown";
@@ -1003,7 +971,6 @@ class GleamSourceFileGenerator {
         this.push(`unwrap: fn(e) { let assert ${ctorName}(v) = e\n v },\n`);
         this.push(`),\n`);
       }
-      void i;
     }
     this.push(`],\n`);
     this.push(`unknown_default: ${fnPrefix}unknown,\n`);
@@ -1035,6 +1002,27 @@ class GleamSourceFileGenerator {
     this.push(`}\n\n`);
   }
 
+  /** Returns the `fnPrefix` for a record: ancestor names joined by `__`, with a trailing `_`. */
+  private fnPrefixFor(record: RecordLocation): string {
+    return (
+      record.recordAncestors
+        .map((a) => convertCase(a.name.text, "lower_underscore"))
+        .join("__") + "_"
+    );
+  }
+
+  /** Returns the unique Gleam type name for a record in this file context. */
+  private typeNameFor(record: RecordLocation): string {
+    return this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
+  }
+
+  /** Returns the qualified prefix for a record: empty string if local, else `"alias."`. */
+  private qualifiedPrefixFor(record: RecordLocation): string {
+    return this.group.keySet.has(record.record.key)
+      ? ""
+      : `${this.keyToGroup.get(record.record.key)!.alias}.`;
+  }
+
   private pushSeparator(header: string): void {
     this.push(`// ${"=".repeat(78)}\n`);
     this.push(`// ${header}\n`);
@@ -1052,18 +1040,12 @@ class GleamSourceFileGenerator {
     // where N is the length of this array.
     const contextStack: Array<"{" | "(" | "[" | "<" | ":" | "."> = [];
     // Returns the last element in `contextStack`.
-    const peakTop = (): string => contextStack.at(-1)!;
-    const getMatchingLeftBracket = (r: "}" | ")" | "]" | ">"): string => {
-      switch (r) {
-        case "}":
-          return "{";
-        case ")":
-          return "(";
-        case "]":
-          return "[";
-        case ">":
-          return "<";
-      }
+    const peekTop = (): string => contextStack.at(-1)!;
+    const matchingLeft: Record<string, string> = {
+      "}": "{",
+      ")": "(",
+      "]": "[",
+      ">": "<",
     };
     for (let line of this.code.split("\n")) {
       line = line.trim();
@@ -1079,7 +1061,7 @@ class GleamSourceFileGenerator {
         case ")":
         case "]":
         case ">": {
-          const left = getMatchingLeftBracket(firstChar);
+          const left = matchingLeft[firstChar]!;
           while (contextStack.pop() !== left) {
             if (contextStack.length <= 0) {
               throw Error();
@@ -1088,7 +1070,7 @@ class GleamSourceFileGenerator {
           break;
         }
         case ".": {
-          if (peakTop() !== ".") {
+          if (peekTop() !== ".") {
             contextStack.push(".");
           }
           break;
@@ -1115,14 +1097,14 @@ class GleamSourceFileGenerator {
         }
         case ":":
         case "=": {
-          if (peakTop() !== ":") {
+          if (peekTop() !== ":") {
             contextStack.push(":");
           }
           break;
         }
         case ";":
         case ",": {
-          if (peakTop() === "." || peakTop() === ":") {
+          if (peekTop() === "." || peekTop() === ":") {
             contextStack.pop();
           }
         }
@@ -1149,6 +1131,22 @@ class GleamSourceFileGenerator {
 }
 
 export const GENERATOR = new GleamCodeGenerator();
+
+/**
+ * Maps a list of fields to Gleam record constructor argument labels,
+ * appending `_rec` to hard-recursive fields to match the stored label.
+ * Returns a comma-joined string suitable for use in a constructor call.
+ */
+function fieldArgsWithRecSuffix(
+  fields: ReadonlyArray<{ name: { text: string }; isRecursive: unknown }>,
+): string {
+  return fields
+    .map((f) => {
+      const varName = toFieldName(f.name.text);
+      return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
+    })
+    .join(", ");
+}
 
 function commentify(text: string): string {
   const trimmed = text.trim().replace(/\n{3,}/g, "\n\n");
