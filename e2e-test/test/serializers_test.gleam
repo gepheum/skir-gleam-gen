@@ -1,7 +1,7 @@
 import gleam/option.{None, Some}
-import gleam/time/timestamp.{type Timestamp}
 import gleeunit/should
 import skir_client
+import timestamp
 
 // =============================================================================
 // bool_serializer — to_dense_json
@@ -1453,14 +1453,10 @@ fn list_each(list: List(a), f: fn(a) -> Nil) -> Nil {
   }
 }
 
-fn from_unix_milli(ms: Int) -> Timestamp {
-  timestamp.from_unix_seconds_and_nanoseconds(
-    seconds: ms / 1000,
-    nanoseconds: ms % 1000 * 1_000_000,
-  )
+fn from_unix_milli(ms: Int) -> timestamp.Timestamp {
+  timestamp.Timestamp(unix_millis: ms)
 }
 
-fn to_unix_milli(ts: Timestamp) -> Int {
-  let #(s, ns) = timestamp.to_unix_seconds_and_nanoseconds(ts)
-  s * 1000 + ns / 1_000_000
+fn to_unix_milli(ts: timestamp.Timestamp) -> Int {
+  ts.unix_millis
 }

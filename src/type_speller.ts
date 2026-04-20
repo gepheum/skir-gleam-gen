@@ -46,7 +46,7 @@ export class TypeSpeller {
           case "string":
             return "String";
           case "timestamp":
-            this.neededModules.add("gleam/time/timestamp");
+            this.neededModules.add("timestamp");
             return "timestamp_.Timestamp";
           case "bytes":
             return "BitArray";
@@ -139,8 +139,8 @@ export class TypeSpeller {
           case "string":
             return '""';
           case "timestamp":
-            this.neededModules.add("gleam/time/timestamp");
-            return "timestamp_.from_unix_seconds_and_nanoseconds(0, 0)";
+            this.neededModules.add("timestamp");
+            return "timestamp_.Timestamp(unix_millis: 0)";
           case "bytes":
             return "<<>>";
         }

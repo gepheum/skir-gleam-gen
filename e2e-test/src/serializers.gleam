@@ -9,7 +9,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleam/string_tree
 import gleam/time/calendar
-import gleam/time/timestamp.{type Timestamp}
+import gleam/time/timestamp as gleam_timestamp
+import timestamp as skir_timestamp
 import serializer.{
   type Serializer, type TypeAdapter, type UnrecognizedValues, TypeAdapter,
   get_adapter, make_serializer,
@@ -889,17 +890,7 @@ fn encode_timestamp(ms: Int) -> BitArray {
   }
 }
 
-fn timestamp_adapter() -> TypeAdapter(Timestamp) {
-  let from_unix_milli = fn(ms: Int) -> Timestamp {
-    timestamp.from_unix_seconds_and_nanoseconds(
-      seconds: ms / 1000,
-      nanoseconds: ms % 1000 * 1_000_000,
-    )
-  }
-  let to_unix_milli = fn(ts: Timestamp) -> Int {
-    let #(s, ns) = timestamp.to_unix_seconds_and_nanoseconds(ts)
-    s * 1000 + ns / 1_000_000
-  }
+fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
   let parse_millis_string = fn(s) {
     case int.parse(s) {
       Ok(n) -> n
@@ -911,14 +902,18 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
     }
   }
   TypeAdapter(
-    is_default: fn(v) { to_unix_milli(v) == 0 },
-    append_json: fn(v, tree, eol_indent) {
-      let ms = to_unix_milli(v)
+    is_default: fn(v: skir_timestamp.Timestamp) { v.unix_millis == 0 },
+    append_json: fn(v: skir_timestamp.Timestamp, tree, eol_indent) {
+      let ms = v.unix_millis
       case eol_indent {
         "" -> string_tree.append(tree, int.to_string(ms))
         _ -> {
           let child_indent = eol_indent <> "  "
-          let iso = timestamp.to_rfc3339(v, calendar.utc_offset)
+          let iso =
+            gleam_timestamp.to_rfc3339(
+              skir_timestamp.to_gleam_timestamp(v),
+              calendar.utc_offset,
+            )
           tree
           |> string_tree.append("{")
           |> string_tree.append(child_indent)
@@ -935,25 +930,36 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
       }
     },
     decode_json: fn(_) {
-      decode.one_of(decode.int |> decode.map(from_unix_milli), [
-        decode.float
-          |> decode.map(fn(f) { from_unix_milli(float.round(f)) }),
-        {
-          use unix_millis <- decode.field("unix_millis", decode.int)
-          decode.success(from_unix_milli(unix_millis))
-        },
-        decode.string
-          |> decode.map(fn(s) { from_unix_milli(parse_millis_string(s)) }),
-        decode.optional(decode.int)
-          |> decode.map(fn(opt) { from_unix_milli(option.unwrap(opt, 0)) }),
-      ])
+      decode.one_of(
+        decode.int
+          |> decode.map(fn(ms) { skir_timestamp.Timestamp(unix_millis: ms) }),
+        [
+          decode.float
+            |> decode.map(fn(f) {
+              skir_timestamp.Timestamp(unix_millis: float.round(f))
+            }),
+          {
+            use unix_millis <- decode.field("unix_millis", decode.int)
+            decode.success(skir_timestamp.Timestamp(unix_millis: unix_millis))
+          },
+          decode.string
+            |> decode.map(fn(s) {
+              skir_timestamp.Timestamp(unix_millis: parse_millis_string(s))
+            }),
+          decode.optional(decode.int)
+            |> decode.map(fn(opt) {
+              skir_timestamp.Timestamp(unix_millis: option.unwrap(opt, 0))
+            }),
+        ],
+      )
     },
     encode: fn(v, acc) {
-      bytes_tree.append(acc, encode_timestamp(to_unix_milli(v)))
+      bytes_tree.append(acc, encode_timestamp(v.unix_millis))
     },
     decode: fn(bits, _) {
       case decode_number(bits) {
-        Ok(#(ms, rest)) -> Ok(#(from_unix_milli(ms), rest))
+        Ok(#(ms, rest)) ->
+          Ok(#(skir_timestamp.Timestamp(unix_millis: ms), rest))
         Error(e) -> Error(e)
       }
     },
@@ -967,7 +973,7 @@ fn timestamp_adapter() -> TypeAdapter(Timestamp) {
 }
 
 /// Returns the serializer for Timestamp values.
-pub fn timestamp_serializer() -> Serializer(Timestamp) {
+pub fn timestamp_serializer() -> Serializer(skir_timestamp.Timestamp) {
   make_serializer(timestamp_adapter())
 }
 

@@ -2,7 +2,7 @@ import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic/decode.{type Decoder}
 import gleam/option.{type Option}
 import gleam/string_tree.{type StringTree}
-import gleam/time/timestamp.{type Timestamp}
+import timestamp
 import serializer
 import serializers
 import type_descriptor.{type TypeDescriptor}
@@ -189,7 +189,7 @@ pub fn bytes_serializer() -> Serializer(BitArray) {
 }
 
 /// Returns the serializer for Timestamp values.
-pub fn timestamp_serializer() -> Serializer(Timestamp) {
+pub fn timestamp_serializer() -> Serializer(timestamp.Timestamp) {
   serializers.timestamp_serializer()
 }
 

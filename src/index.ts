@@ -1,6 +1,4 @@
 // TODO: keyed arrays
-// TODO: recrusive fields...
-// TODO: rm canUseConst...
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 //   Make Serializer an opaque type
@@ -12,7 +10,6 @@ import {
   type Doc,
   type RecordKey,
   type RecordLocation,
-  type ResolvedType,
   convertCase,
 } from "skir-internal";
 import { z } from "zod";
@@ -126,61 +123,6 @@ function computeGroupsForModule(
 }
 
 /**
- * Computes the set of record keys whose default value can be represented as a
- * Gleam `const` (as opposed to a zero-arg `fn`). A record can use `const` iff:
- *   - It is an enum (always defaults to `Unknown(option.None)`)
- *   - It is a struct and none of its non-hard-recursive fields transitively
- *     contain a `timestamp` primitive (which requires a function call to
- *     construct its default value).
- *
- * Computed via an optimistic fixed-point: assume all records can use `const`,
- * then propagate "cannot" for timestamp fields and for fields whose type
- * cannot use `const`.
- */
-function computeConstDefaultKeys(
-  recordMap: ReadonlyMap<RecordKey, RecordLocation>,
-): Set<RecordKey> {
-  const canUseConst = new Map<RecordKey, boolean>();
-  for (const key of recordMap.keys()) {
-    canUseConst.set(key, true);
-  }
-
-  const typeBlocksConst = (type: ResolvedType): boolean => {
-    switch (type.kind) {
-      case "primitive":
-        return type.primitive === "timestamp";
-      case "array":
-        return typeBlocksConst(type.item);
-      case "optional":
-        return typeBlocksConst(type.other);
-      case "record":
-        return canUseConst.get(type.key) === false;
-    }
-  };
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [key, rec] of recordMap) {
-      if (rec.record.recordType !== "struct") continue;
-      if (canUseConst.get(key) === false) continue;
-      for (const field of rec.record.fields) {
-        if (field.isRecursive === "hard") continue;
-        if (field.type && typeBlocksConst(field.type)) {
-          canUseConst.set(key, false);
-          changed = true;
-          break;
-        }
-      }
-    }
-  }
-
-  return new Set(
-    [...canUseConst.entries()].filter(([, v]) => v).map(([k]) => k),
-  );
-}
-
-/**
  * Computes unique Gleam names for all types and variant constructors in a
  * single Skir module using BFS depth-order processing with "X" collision
  * avoidance. Both type names and constructor names share the same collision
@@ -278,7 +220,7 @@ function computeModuleNames(records: readonly RecordLocation[]): {
 /** Ordered list of client library module paths and their import aliases. */
 const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
-  ["gleam/time/timestamp", "timestamp_"],
+  ["timestamp", "timestamp_"],
   ["skir_client", "skir_client_"],
   ["skir_client/internal/struct_serializer", "struct_serializer_"],
   ["gleam/list", "list_"],
@@ -290,7 +232,6 @@ class GleamSourceFileGenerator {
   private code = "";
   private readonly neededModules = new Set<string>();
   private readonly typeSpeller: TypeSpeller;
-  private readonly constDefaultKeys: ReadonlySet<RecordKey>;
 
   constructor(
     private readonly group: GroupInfo,
@@ -322,17 +263,13 @@ class GleamSourceFileGenerator {
       return `${keyToGroup.get(key)!.alias}.${typeName}`;
     };
 
-    const constDefaultKeys = computeConstDefaultKeys(recordMap);
-    this.constDefaultKeys = constDefaultKeys;
-
     const defaultExprFor = (key: RecordKey): string => {
       const rec = recordMap.get(key)!;
       const baseName = rec.record.recordType === "enum" ? "unknown" : "default";
       const name = fnNameFor(key, baseName);
-      const isConst = constDefaultKeys.has(key);
-      if (group.keySet.has(key)) return isConst ? name : `${name}()`;
+      if (group.keySet.has(key)) return name;
       const alias = keyToGroup.get(key)!.alias;
-      return isConst ? `${alias}.${name}` : `${alias}.${name}()`;
+      return `${alias}.${name}`;
     };
 
     const serializerExprFor = (key: RecordKey): string => {
@@ -518,19 +455,11 @@ class GleamSourceFileGenerator {
       this.push("}\n\n");
     }
 
-    // Default const or function.
-    const useConstDefault = this.constDefaultKeys.has(struct.record.key);
+    // Default const.
     this.push(
-      useConstDefault
-        ? `/// The default \`${typeName}\` with all fields set to their default values.\n`
-        : `/// Returns the default \`${typeName}\` with all fields set to their default values.\n`,
+      `/// The default \`${typeName}\` with all fields set to their default values.\n`,
     );
-    if (useConstDefault) {
-      this.push(`pub const ${fnPrefix}default = ${typeName}(\n`);
-    } else {
-      this.push(`pub fn ${fnPrefix}default() -> ${typeName} {\n`);
-      this.push(`${typeName}(\n`);
-    }
+    this.push(`pub const ${fnPrefix}default = ${typeName}(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
@@ -541,12 +470,7 @@ class GleamSourceFileGenerator {
       }
     }
     this.push(`unrecognized_: struct_serializer_.None,\n`);
-    if (useConstDefault) {
-      this.push(")\n\n");
-    } else {
-      this.push(")\n");
-      this.push("}\n\n");
-    }
+    this.push(")\n\n");
 
     // `new` constructor function.
     this.push(
@@ -582,8 +506,7 @@ class GleamSourceFileGenerator {
       (a, b) => a.number - b.number,
     );
 
-    const structDefaultExpr = `${fnPrefix}default${useConstDefault ? "" : "()"}`;
-
+    const structDefaultExpr = `${fnPrefix}default`;
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
       `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
