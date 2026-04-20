@@ -1,13 +1,13 @@
 // TODO: keyed arrays
 // TODO: in the generated code, ask AI if some things are not optimal
-// TODO: signify that Serializer.adapter is for internal use...
-//   Make Serializer an opaque type
-// TODO: fix all comments
+// TODO: review everything
+// TODO: look at generated comments
 
 import {
   type CodeGenerator,
   type Constant,
   type Doc,
+  type Method,
   type RecordKey,
   type RecordLocation,
   convertCase,
@@ -28,6 +28,8 @@ interface GroupInfo {
   records: readonly RecordLocation[];
   /** Constants declared at the top-level of the corresponding Skir module. */
   constants: readonly Constant<false>[];
+  /** Methods declared at the top-level of the corresponding Skir module. */
+  methods: readonly Method<false>[];
   /** Output file path relative to outDir, e.g. "gepheum/foo/bar__baz.gleam". */
   outputPath: string;
   /** Gleam import path, e.g. "skirout/gepheum/foo/bar__baz". */
@@ -56,6 +58,7 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
       const groups = computeGroupsForModule(
         module.records,
         module.constants as readonly Constant<false>[],
+        module.methods as readonly Method<false>[],
         module.path,
       );
       for (const group of groups) {
@@ -93,15 +96,17 @@ class GleamCodeGenerator implements CodeGenerator<Config> {
 }
 
 /**
- * Returns a single GroupInfo containing all records from the given Skir module.
+ * Returns a single GroupInfo containing all symbols from the given Skir module.
  * All types from one .skir file are co-located in one Gleam module.
  */
 function computeGroupsForModule(
   records: readonly RecordLocation[],
   constants: readonly Constant<false>[] = [],
+  methods: readonly Method<false>[] = [],
   modulePath?: string,
 ): GroupInfo[] {
-  if (records.length === 0 && constants.length === 0) return [];
+  if (records.length === 0 && constants.length === 0 && methods.length === 0)
+    return [];
   let moduleDir: string;
   if (records.length > 0) {
     moduleDir = getModuleDir(records[0]!.modulePath);
@@ -114,6 +119,7 @@ function computeGroupsForModule(
     {
       records: [...records],
       constants: [...constants],
+      methods: [...methods],
       outputPath: `${moduleDir}.gleam`,
       importPath: `skirout/${moduleDir}`,
       alias: moduleDir.replace(/\//g, "__") + "_",
@@ -321,6 +327,10 @@ class GleamSourceFileGenerator {
 
     this.writeConstants();
 
+    for (const method of this.group.methods) {
+      this.writeMethod(method);
+    }
+
     const body = this.code;
 
     // Build imports from the collected set, in canonical order.
@@ -382,6 +392,35 @@ class GleamSourceFileGenerator {
 `,
       );
     }
+  }
+
+  private writeMethod(method: Method<false>): void {
+    this.neededModules.add("skir_client");
+    const { typeSpeller } = this;
+    const gleamName =
+      convertCase(method.name.text, "lower_underscore") + "_method";
+    const requestType = typeSpeller.getGleamType(method.requestType!);
+    const responseType = typeSpeller.getGleamType(method.responseType!);
+    const requestSerializerExpr = typeSpeller.getSerializerExpression(
+      method.requestType!,
+    );
+    const responseSerializerExpr = typeSpeller.getSerializerExpression(
+      method.responseType!,
+    );
+    this.pushSeparator(`method ${method.name.text}`);
+    const doc = commentify(docToCommentText(method.doc));
+    if (doc) this.push(doc);
+    this.push(
+      `pub fn ${gleamName}() -> skir_client_.Method(${requestType}, ${responseType}) {\n`,
+    );
+    this.push(`skir_client_.Method(\n`);
+    this.push(`name: ${JSON.stringify(method.name.text)},\n`);
+    this.push(`number: ${method.number},\n`);
+    this.push(`doc: ${JSON.stringify(docToCommentText(method.doc))},\n`);
+    this.push(`request_serializer: ${requestSerializerExpr},\n`);
+    this.push(`response_serializer: ${responseSerializerExpr},\n`);
+    this.push(`)\n`);
+    this.push(`}\n\n`);
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
