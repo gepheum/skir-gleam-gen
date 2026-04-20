@@ -1022,7 +1022,7 @@ fn verify_enum_b_from_bytes_is_wrapper_b(
 // =============================================================================
 
 pub fn run_golden_tests_test() {
-  let unit_tests = goldens.unit_tests_constant
+  let unit_tests = goldens.unit_tests_const
 
   // Verify the list is non-empty
   let assert [first, ..] = unit_tests

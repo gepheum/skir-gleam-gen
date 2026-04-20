@@ -4,73 +4,73 @@ import skirout/enums
 import timestamp
 
 // =============================================================================
-// b_constant
+// b_const
 // =============================================================================
 
-pub fn b_constant_test() {
-  constants.b_constant
+pub fn b_const_test() {
+  constants.b_const
   |> should.equal(False)
 }
 
 // =============================================================================
-// foo_method_constant
+// foo_method_const
 // =============================================================================
 
-pub fn foo_method_constant_test() {
-  constants.foo_method_constant
+pub fn foo_method_const_test() {
+  constants.foo_method_const
   |> should.equal(True)
 }
 
 // =============================================================================
-// large_int64_constant
+// large_int64_const
 // =============================================================================
 
-pub fn large_int64_constant_test() {
-  constants.large_int64_constant
+pub fn large_int64_const_test() {
+  constants.large_int64_const
   |> should.equal(9_223_372_036_854_775_807)
 }
 
 // =============================================================================
-// one_single_quoted_string_constant
+// one_single_quoted_string_const
 // =============================================================================
 
-pub fn one_single_quoted_string_constant_test() {
-  constants.one_single_quoted_string_constant
+pub fn one_single_quoted_string_const_test() {
+  constants.one_single_quoted_string_const
   |> should.equal("\"Foo\"")
 }
 
 // =============================================================================
-// one_timestamp_constant
+// one_timestamp_const
 // =============================================================================
 
-pub fn one_timestamp_constant_test() {
-  let timestamp.Timestamp(unix_millis: ms) = constants.one_timestamp_constant
+pub fn one_timestamp_const_test() {
+  let timestamp.Timestamp(unix_millis: ms) = constants.one_timestamp_const
   ms
   |> should.equal(1_703_984_028_000)
 }
 
 // =============================================================================
-// pi_constant
+// pi_const
 // =============================================================================
 
-pub fn pi_constant_test() {
-  constants.pi_constant
+pub fn pi_const_test() {
+  constants.pi_const
   |> should.equal(3.141592653589793)
 }
 
 // =============================================================================
-// one_constant_constant — complex enum with nested values
+// one_constant_const — complex enum with nested values
 // =============================================================================
 
-pub fn one_constant_constant_is_array_variant_test() {
-  case constants.one_constant_constant {
+pub fn one_constant_const_is_array_variant_test() {
+  case constants.one_constant_const {
     enums.JsonValueArray(_) -> Nil
     _ -> should.fail()
   }
 }
 
-pub fn one_constant_constant_array_has_4_items_test() {
-  let assert enums.JsonValueArray(items) = constants.one_constant_constant
+pub fn one_constant_const_array_has_4_items_test() {
+  let assert enums.JsonValueArray(items) = constants.one_constant_const
   let assert [b, n, s, obj] = items
   b |> should.equal(enums.JsonValueBoolean(True))
   n |> should.equal(enums.JsonValueNumber(2.5))
@@ -82,10 +82,10 @@ pub fn one_constant_constant_array_has_4_items_test() {
 }
 
 // =============================================================================
-// infinity_constant, minus_infinity_constant, nan_constant — pub const fallbacks
+// infinity_const, minus_infinity_const, nan_const — pub const fallbacks
 // =============================================================================
 
-pub fn infinity_constant_is_float_test() {
+pub fn infinity_const_is_float_test() {
   // Infinity maps to max float
-  should.equal(constants.infinity_constant >. 1.0e308, True)
+  should.equal(constants.infinity_const >. 1.0e308, True)
 }

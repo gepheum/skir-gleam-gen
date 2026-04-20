@@ -369,7 +369,7 @@ class GleamSourceFileGenerator {
     for (const constant of this.group.constants) {
       if (!constant.type || constant.valueAsDenseJson === undefined) continue;
       const gleamName =
-        convertCase(constant.name.text, "lower_underscore") + "_constant";
+        convertCase(constant.name.text, "lower_underscore") + "_const";
       const doc = commentify(docToCommentText(constant.doc));
       this.pushSeparator(`constant ${constant.name.text}`);
       const gleamType = this.typeSpeller.getGleamType(constant.type);
