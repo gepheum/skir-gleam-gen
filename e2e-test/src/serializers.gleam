@@ -10,11 +10,11 @@ import gleam/string
 import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp as gleam_timestamp
-import timestamp as skir_timestamp
 import serializer.{
   type Serializer, type TypeAdapter, type UnrecognizedValues, TypeAdapter,
   get_adapter, make_serializer,
 }
+import timestamp as skir_timestamp
 import type_descriptor
 
 // =============================================================================

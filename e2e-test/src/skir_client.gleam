@@ -2,9 +2,9 @@ import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic/decode.{type Decoder}
 import gleam/option.{type Option}
 import gleam/string_tree.{type StringTree}
-import timestamp
 import serializer
 import serializers
+import timestamp
 import type_descriptor.{type TypeDescriptor}
 
 // =============================================================================
