@@ -24,7 +24,9 @@ enum JsonValue {
   object: [Pair|name] = 5;
 }
 
-enum EmptyEnum {}
+enum EmptyEnum {
+  struct Unknown {}
+}
 
 enum EnumWithNameConflict {
   SERIALIZER;

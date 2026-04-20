@@ -10,7 +10,10 @@ import {
   type Method,
   type RecordKey,
   type RecordLocation,
+  type ResolvedType,
+  type Value,
   convertCase,
+  unquoteAndUnescape,
 } from "skir-internal";
 import { z } from "zod";
 import { getModuleDir, getTypeName, toFieldName } from "./naming.js";
@@ -241,7 +244,7 @@ class GleamSourceFileGenerator {
 
   constructor(
     private readonly group: GroupInfo,
-    recordMap: ReadonlyMap<RecordKey, RecordLocation>,
+    private readonly recordMap: ReadonlyMap<RecordKey, RecordLocation>,
     private readonly keyToGroup: ReadonlyMap<RecordKey, GroupInfo>,
     private readonly uniqueTypeNames: ReadonlyMap<RecordKey, string>,
     private readonly ctorNames: ReadonlyMap<string, string>,
@@ -365,32 +368,210 @@ class GleamSourceFileGenerator {
   private writeConstants(): void {
     for (const constant of this.group.constants) {
       if (!constant.type || constant.valueAsDenseJson === undefined) continue;
-      this.neededModules.add("skir_client");
-      const fnName = convertCase(constant.name.text, "lower_underscore");
-      const gleamType = this.typeSpeller.getGleamType(constant.type);
-      const serializerExpr = this.typeSpeller.getSerializerExpression(
-        constant.type,
-      );
-      const jsonStr = JSON.stringify(JSON.stringify(constant.valueAsDenseJson));
+      const gleamName =
+        convertCase(constant.name.text, "lower_underscore") + "_constant";
       const doc = commentify(docToCommentText(constant.doc));
+      this.pushSeparator(`constant ${constant.name.text}`);
+      const gleamType = this.typeSpeller.getGleamType(constant.type);
+      const constExpr = this.valueToGleamExpr(constant.value, constant.type);
       if (doc) this.push(doc);
-      this.push(
-        `pub fn ${fnName}() -> ${gleamType} {
-` +
-          `let assert Ok(v) = skir_client_.from_json(
-` +
-          `${serializerExpr},
-` +
-          `${jsonStr},
-` +
-          `)
-` +
-          `v
-` +
-          `}
+      this.push(`pub const ${gleamName}: ${gleamType} = ${constExpr}\n\n`);
+    }
+  }
 
-`,
+  /**
+   * Generates a Gleam const expression for a Skir value.
+   */
+  private valueToGleamExpr(value: Value, type: ResolvedType): string {
+    switch (type.kind) {
+      case "optional": {
+        if (value.kind === "literal" && value.token.text === "null") {
+          this.neededModules.add("gleam/option");
+          return "option_.None";
+        }
+        const inner = this.valueToGleamExpr(value, type.other);
+        this.neededModules.add("gleam/option");
+        return `option_.Some(\n${inner}\n)`;
+      }
+      case "array": {
+        if (value.kind !== "array") throw new Error("Expected array value");
+        const items = value.items.map((item) =>
+          this.valueToGleamExpr(item, type.item),
+        );
+        return `[\n${items.join(",\n")}\n]`;
+      }
+      case "primitive": {
+        if (value.kind !== "literal") throw new Error("Expected literal value");
+        return this.primitiveToGleamExpr(value.token.text, type.primitive);
+      }
+      case "record": {
+        const recordLoc = this.recordMap.get(type.key);
+        if (!recordLoc)
+          throw new Error(`Record not found: ${String(type.key)}`);
+        if (recordLoc.record.recordType === "struct") {
+          return this.structValueToGleamExpr(value, recordLoc);
+        } else {
+          return this.enumValueToGleamExpr(value, recordLoc);
+        }
+      }
+    }
+  }
+
+  private primitiveToGleamExpr(tokenText: string, primitive: string): string {
+    switch (primitive) {
+      case "bool":
+        return tokenText === "true" ? "True" : "False";
+      case "int32":
+      case "int64":
+      case "hash64":
+        // Integer literals are valid Gleam const expressions as-is.
+        return tokenText;
+      case "float32":
+      case "float64": {
+        if (tokenText.startsWith('"') || tokenText.startsWith("'")) {
+          // Special values encoded as strings: "Infinity", "-Infinity", "NaN".
+          // Mirror the fallbacks used by float_decode_json in serializers.gleam.
+          const special = unquoteAndUnescape(tokenText);
+          switch (special) {
+            case "Infinity":
+              return "1.7976931348623157e308";
+            case "-Infinity":
+              return "-1.7976931348623157e308";
+            default:
+              // NaN and any other unrecognised string → 0.0
+              return "0.0";
+          }
+        }
+        // Gleam float literals require a decimal point.
+        if (
+          !tokenText.includes(".") &&
+          !tokenText.toLowerCase().includes("e")
+        ) {
+          return `${tokenText}.0`;
+        }
+        return tokenText;
+      }
+      case "string": {
+        // unquoteAndUnescape handles both single- and double-quoted Skir strings,
+        // including line continuations. JSON.stringify gives a valid Gleam string.
+        const unescaped = unquoteAndUnescape(tokenText);
+        return JSON.stringify(unescaped);
+      }
+      case "bytes": {
+        // Token is a quoted "hex:DEADBEEF..." string.
+        const raw = unquoteAndUnescape(tokenText);
+        const hex = raw.startsWith("hex:") ? raw.slice(4) : raw;
+        if (hex.length === 0) return "<<>>";
+        const bytes: number[] = [];
+        for (let i = 0; i < hex.length; i += 2) {
+          bytes.push(parseInt(hex.slice(i, i + 2), 16));
+        }
+        return `<<${bytes.join(", ")}>>`;
+      }
+      case "timestamp": {
+        const isoString = unquoteAndUnescape(tokenText);
+        const ms = new Date(isoString).getTime();
+        if (Number.isNaN(ms)) {
+          throw new Error(`Cannot parse timestamp: ${tokenText}`);
+        }
+        this.neededModules.add("timestamp");
+        return `timestamp_.Timestamp(unix_millis: ${ms})`;
+      }
+      default:
+        throw new Error(`Unknown primitive type: ${primitive}`);
+    }
+  }
+
+  private structValueToGleamExpr(value: Value, record: RecordLocation): string {
+    if (value.kind !== "object") throw new Error("Expected object for struct");
+    const typeName =
+      this.uniqueTypeNames.get(record.record.key) ?? getTypeName(record);
+    const prefix = this.group.keySet.has(record.record.key)
+      ? ""
+      : `${this.keyToGroup.get(record.record.key)!.alias}.`;
+    this.neededModules.add("skir_client/internal/struct_serializer");
+    // Sort fields alphabetically to match the generated type definition.
+    const fields = [...record.record.fields].sort((a, b) =>
+      a.name.text.localeCompare(b.name.text),
+    );
+    const args: string[] = [];
+    for (const field of fields) {
+      if (!field.type) continue;
+      const fieldName = toFieldName(field.name.text);
+      const entry = value.entries[field.name.text];
+      if (field.isRecursive === "hard") {
+        this.neededModules.add("skir_client");
+        if (entry) {
+          const innerExpr = this.valueToGleamExpr(entry.value, field.type);
+          args.push(`${fieldName}_rec: skir_client_.Some(\n${innerExpr}\n)`);
+        } else {
+          args.push(`${fieldName}_rec: skir_client_.Default`);
+        }
+      } else {
+        if (entry) {
+          args.push(
+            `${fieldName}: ${this.valueToGleamExpr(entry.value, field.type)}`,
+          );
+        } else {
+          args.push(
+            `${fieldName}: ${this.typeSpeller.getDefaultExpression(field.type)}`,
+          );
+        }
+      }
+    }
+    args.push("unrecognized_: struct_serializer_.None");
+    return `${prefix}${typeName}(\n${args.join(",\n")}\n)`;
+  }
+
+  private enumValueToGleamExpr(value: Value, record: RecordLocation): string {
+    const prefix = this.group.keySet.has(record.record.key)
+      ? ""
+      : `${this.keyToGroup.get(record.record.key)!.alias}.`;
+    if (value.kind === "literal") {
+      // A string literal naming a constant (no-payload) variant.
+      const valueType = value.type;
+      if (!valueType || valueType.kind !== "enum") {
+        // The UNKNOWN variant is not assigned a type by the compiler.
+        // Reference the pre-generated "unknown" default const.
+        const fnPrefix =
+          record.recordAncestors
+            .map((a) => convertCase(a.name.text, "lower_underscore"))
+            .join("__") + "_";
+        return `${prefix}${fnPrefix}unknown`;
+      }
+      const ctorName =
+        this.ctorNames.get(
+          `${record.record.key}:${valueType.variant.name.text}`,
+        ) ??
+        (this.uniqueTypeNames.get(record.record.key) ?? "") +
+          convertCase(valueType.variant.name.text, "UpperCamel");
+      return `${prefix}${ctorName}`;
+    } else if (value.kind === "object") {
+      // An object {kind: "variantName", value: payload} for a wrapper variant.
+      const kindEntry = value.entries["kind"];
+      if (!kindEntry || kindEntry.value.kind !== "literal") {
+        throw new Error("Expected 'kind' entry in enum object value");
+      }
+      const variantName = unquoteAndUnescape(kindEntry.value.token.text);
+      const ctorName =
+        this.ctorNames.get(`${record.record.key}:${variantName}`) ??
+        (this.uniqueTypeNames.get(record.record.key) ?? "") +
+          convertCase(variantName, "UpperCamel");
+      const payloadEntry = value.entries["value"];
+      if (!payloadEntry) {
+        throw new Error("Expected 'value' entry in enum wrapper variant");
+      }
+      const variantDecl = record.record.nameToDeclaration[variantName];
+      if (!variantDecl || variantDecl.kind !== "field" || !variantDecl.type) {
+        throw new Error(`Wrapper variant field not found: ${variantName}`);
+      }
+      const payloadExpr = this.valueToGleamExpr(
+        payloadEntry.value,
+        variantDecl.type,
       );
+      return `${prefix}${ctorName}(\n${payloadExpr}\n)`;
+    } else {
+      throw new Error(`Unexpected value kind for enum: ${value.kind}`);
     }
   }
 
