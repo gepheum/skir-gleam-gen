@@ -91,7 +91,7 @@ pub fn field_spec_to_field_adapter(
 ) -> FieldAdapter(s) {
   case field_serializer {
     Eager(s) -> {
-      let ta = s.adapter
+      let ta = s.internal_adapter
       FieldAdapter(
         name: name,
         number: number,
@@ -125,19 +125,19 @@ pub fn field_spec_to_field_adapter(
         doc: doc,
         is_default: fn(acc) { get(acc) == default },
         append_json: fn(acc, tree, eol_indent) {
-          f().adapter.append_json(get(acc), tree, eol_indent)
+          f().internal_adapter.append_json(get(acc), tree, eol_indent)
         },
         decode_json: fn(d, acc, keep) {
-          case decode.run(d, f().adapter.decode_json(keep)) {
+          case decode.run(d, f().internal_adapter.decode_json(keep)) {
             Ok(f_val) -> Ok(set(acc, f_val))
             Error([decode.DecodeError(expected:, found:, ..), ..]) ->
               Error("expected " <> expected <> " but found " <> found)
             Error([]) -> Error("decode error")
           }
         },
-        encode: fn(acc, tree) { f().adapter.encode(get(acc), tree) },
+        encode: fn(acc, tree) { f().internal_adapter.encode(get(acc), tree) },
         decode: fn(bits, acc, keep_unrecognized) {
-          case f().adapter.decode(bits, keep_unrecognized) {
+          case f().internal_adapter.decode(bits, keep_unrecognized) {
             Ok(#(f_val, rest)) -> Ok(#(set(acc, f_val), rest))
             Error(e) -> Error(e)
           }
@@ -178,7 +178,7 @@ pub fn decode_json_field(
   case opt_elem {
     option.None -> Ok(default)
     option.Some(elem) ->
-      case decode.run(elem, s.adapter.decode_json(keep)) {
+      case decode.run(elem, s.internal_adapter.decode_json(keep)) {
         Ok(v) -> Ok(v)
         Error(errs) ->
           case errs {
@@ -201,7 +201,7 @@ pub fn decode_binary_field(
 ) -> Result(#(f, BitArray), String) {
   case active {
     False -> Ok(#(default, bits))
-    True -> s.adapter.decode(bits, keep)
+    True -> s.internal_adapter.decode(bits, keep)
   }
 }
 
@@ -228,7 +228,7 @@ pub fn decode_json_field_opt(
   case opt_elem {
     option.None -> Ok(option.None)
     option.Some(elem) ->
-      case decode.run(elem, s.adapter.decode_json(keep)) {
+      case decode.run(elem, s.internal_adapter.decode_json(keep)) {
         Ok(v) -> Ok(option.Some(v))
         Error(errs) ->
           case errs {
@@ -251,7 +251,7 @@ pub fn decode_binary_field_opt(
   case active {
     False -> Ok(#(option.None, bits))
     True ->
-      case s.adapter.decode(bits, keep) {
+      case s.internal_adapter.decode(bits, keep) {
         Ok(#(v, rest)) -> Ok(#(option.Some(v), rest))
         Error(e) -> Error(e)
       }

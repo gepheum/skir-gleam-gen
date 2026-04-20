@@ -128,7 +128,7 @@ pub fn constant_variant(
 /// The optional `type_sig` parameter is used for recursive variant types to
 /// avoid infinite recursion when computing the type descriptor. When provided,
 /// the type descriptor for this variant returns `Some(TypeDescriptor(type_sig,
-/// {}))` directly instead of calling `serializer_fn().adapter.type_descriptor()`.
+/// {}))` directly instead of calling `serializer_fn().internal_adapter.type_descriptor()`.
 pub fn wrapper_variant(
   name name: String,
   number number: Int,
@@ -144,7 +144,7 @@ pub fn wrapper_variant(
     doc:,
     constant: option.None,
     append_json: fn(e, tree, eol_indent) {
-      let ta = serializer_fn().adapter
+      let ta = serializer_fn().internal_adapter
       let v = unwrap(e)
       case eol_indent {
         "" -> {
@@ -173,7 +173,7 @@ pub fn wrapper_variant(
       }
     },
     wrap_from_json: fn(d, keep) {
-      let ta = serializer_fn().adapter
+      let ta = serializer_fn().internal_adapter
       case decode.run(d, ta.decode_json(keep)) {
         Ok(v) -> Ok(wrap(v))
         Error([decode.DecodeError(expected:, found:, ..), ..]) ->
@@ -182,18 +182,18 @@ pub fn wrapper_variant(
       }
     },
     encode_payload: fn(e, tree) {
-      let ta = serializer_fn().adapter
+      let ta = serializer_fn().internal_adapter
       ta.encode(unwrap(e), tree)
     },
     wrap_decode: fn(bits, keep) {
-      let ta = serializer_fn().adapter
+      let ta = serializer_fn().internal_adapter
       case ta.decode(bits, keep) {
         Ok(#(v, rest)) -> Ok(#(wrap(v), rest))
         Error(e) -> Error(e)
       }
     },
     wrap_default: fn() {
-      let ta = serializer_fn().adapter
+      let ta = serializer_fn().internal_adapter
       case ta.decode(<<0>>, Drop) {
         Ok(#(v, _)) -> option.Some(wrap(v))
         Error(_) -> option.None
@@ -201,7 +201,8 @@ pub fn wrapper_variant(
     },
     type_descriptor: fn() {
       case type_sig {
-        option.None -> option.Some(serializer_fn().adapter.type_descriptor())
+        option.None ->
+          option.Some(serializer_fn().internal_adapter.type_descriptor())
         option.Some(sig) ->
           option.Some(type_descriptor.TypeDescriptor(
             type_sig: sig,

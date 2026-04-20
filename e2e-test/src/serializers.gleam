@@ -12,7 +12,7 @@ import gleam/time/calendar
 import gleam/time/timestamp as gleam_timestamp
 import serializer.{
   type Serializer, type TypeAdapter, type UnrecognizedValues, TypeAdapter,
-  get_adapter, make_serializer,
+  make_serializer,
 }
 import timestamp as skir_timestamp
 import type_descriptor
@@ -982,7 +982,7 @@ pub fn timestamp_serializer() -> Serializer(skir_timestamp.Timestamp) {
 // =============================================================================
 
 fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
-  let item = get_adapter(item_serializer)
+  let item = item_serializer.internal_adapter
   TypeAdapter(
     is_default: fn(v) { v == None },
     append_json: fn(v, tree, eol_indent) {
@@ -1031,7 +1031,7 @@ fn list_adapter(
   item_serializer: Serializer(a),
   key_extractor: String,
 ) -> TypeAdapter(List(a)) {
-  let item = get_adapter(item_serializer)
+  let item = item_serializer.internal_adapter
   TypeAdapter(
     is_default: fn(v) { v == [] },
     append_json: fn(v, tree, eol_indent) {

@@ -66,22 +66,17 @@ pub fn make_type_adapter(
 /// A value that can serialize and deserialize values of type `a` to/from JSON
 /// and binary formats.
 pub type Serializer(a) {
-  Serializer(adapter: TypeAdapter(a))
+  Serializer(internal_adapter: TypeAdapter(a))
 }
 
 /// Constructs a `Serializer` from a `TypeAdapter`.
 pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
-  Serializer(adapter:)
-}
-
-/// Extracts the `TypeAdapter` from a `Serializer`.
-pub fn get_adapter(serializer: Serializer(a)) -> TypeAdapter(a) {
-  serializer.adapter
+  Serializer(internal_adapter: adapter)
 }
 
 /// Returns `True` if `value` is the default value for the type.
 pub fn is_default(serializer: Serializer(a), value: a) -> Bool {
-  serializer.adapter.is_default(value)
+  serializer.internal_adapter.is_default(value)
 }
 
 // =============================================================================
@@ -92,21 +87,23 @@ pub fn is_default(serializer: Serializer(a), value: a) -> Bool {
 /// Dense JSON is safe for persistent storage: renaming a field does not break
 /// deserialization.
 pub fn to_dense_json(serializer: Serializer(a), value: a) -> String {
-  serializer.adapter.append_json(value, string_tree.new(), "")
+  serializer.internal_adapter.append_json(value, string_tree.new(), "")
   |> string_tree.to_string()
 }
 
 /// Serializes a value to readable (field-name-based, indented) JSON.
 /// Use this for debugging; prefer `to_dense_json` for storage.
 pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
-  serializer.adapter.append_json(value, string_tree.new(), "\n")
+  serializer.internal_adapter.append_json(value, string_tree.new(), "\n")
   |> string_tree.to_string()
 }
 
 /// Deserializes a value from a JSON string. Accepts both dense and readable
 /// JSON. Unrecognized fields are dropped.
 pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  case json.parse(from: json, using: serializer.adapter.decode_json(Drop)) {
+  case
+    json.parse(from: json, using: serializer.internal_adapter.decode_json(Drop))
+  {
     Ok(v) -> Ok(v)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
@@ -125,7 +122,7 @@ pub fn from_json_with_options(
   case
     json.parse(
       from: json,
-      using: serializer.adapter.decode_json(keep_unrecognized_values),
+      using: serializer.internal_adapter.decode_json(keep_unrecognized_values),
     )
   {
     Ok(v) -> Ok(v)
@@ -138,7 +135,7 @@ pub fn from_json_with_options(
 /// payload produced by the adapter.
 pub fn to_bytes(serializer: Serializer(a), value: a) -> BitArray {
   bytes_tree.from_string("skir")
-  |> serializer.adapter.encode(value, _)
+  |> serializer.internal_adapter.encode(value, _)
   |> bytes_tree.to_bit_array()
 }
 
@@ -160,7 +157,7 @@ pub fn from_bytes_with_options(
 ) -> Result(a, String) {
   case bytes {
     <<115, 107, 105, 114, rest:bits>> ->
-      case serializer.adapter.decode(rest, keep_unrecognized_values) {
+      case serializer.internal_adapter.decode(rest, keep_unrecognized_values) {
         Ok(#(value, _)) -> Ok(value)
         Error(e) -> Error(e)
       }
@@ -168,7 +165,10 @@ pub fn from_bytes_with_options(
       case bit_array.to_string(bytes) {
         Ok(s) ->
           case
-            json.parse(from: s, using: serializer.adapter.decode_json(Drop))
+            json.parse(
+              from: s,
+              using: serializer.internal_adapter.decode_json(Drop),
+            )
           {
             Ok(v) -> Ok(v)
             Error(e) -> Error(json_decode_error_to_string(e))
@@ -180,7 +180,7 @@ pub fn from_bytes_with_options(
 
 /// Returns the TypeDescriptor for the type this serializer handles.
 pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
-  serializer.adapter.type_descriptor()
+  serializer.internal_adapter.type_descriptor()
 }
 
 // =============================================================================
