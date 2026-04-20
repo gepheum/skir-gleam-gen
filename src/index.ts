@@ -1,10 +1,10 @@
 // TODO: keyed arrays
 // TODO: recrusive fields...
+// TODO: rm canUseConst...
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: signify that Serializer.adapter is for internal use...
 //   Make Serializer an opaque type
 // TODO: fix all comments
-// TODO: use an enum for Keep
 
 import {
   type CodeGenerator,
@@ -471,14 +471,14 @@ class GleamSourceFileGenerator {
     // Doc comment.
     this.push(commentify(docToCommentText(struct.record.doc)));
 
-    // Determine which fields are hard-recursive (need Option wrapping).
+    // Determine which fields are hard-recursive (need Recursive wrapping).
     const hardRecFields = fields.filter((f) => f.isRecursive === "hard");
     if (hardRecFields.length > 0) {
       this.neededModules.add("gleam/option");
     }
 
     // Type definition.
-    // Hard-recursive fields are stored internally as option.Option(T) under the
+    // Hard-recursive fields are stored internally as skir_client_.Recursive(T) under the
     // label `fieldname_rec` to avoid infinite-size types.
     this.push(`pub type ${typeName} {\n`);
     this.push(`${typeName}(\n`);
@@ -487,7 +487,7 @@ class GleamSourceFileGenerator {
       this.push(commentify(docToCommentText(field.doc)));
       if (field.isRecursive === "hard") {
         const inner = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}_rec: option_.Option(${inner}),\n`);
+        this.push(`${fieldName}_rec: skir_client_.Recursive(${inner}),\n`);
       } else {
         const gleamType = typeSpeller.getGleamType(field.type!);
         this.push(`${fieldName}: ${gleamType},\n`);
@@ -501,8 +501,8 @@ class GleamSourceFileGenerator {
     this.push("}\n\n");
 
     // Getters for hard-recursive fields.
-    // These expose a plain T (not Option(T)) to callers, returning the default
-    // value when the stored Option is None.
+    // These expose a plain T (not Recursive(T)) to callers, returning the default
+    // value when the stored Recursive is Default.
     for (const field of hardRecFields) {
       const fieldName = toFieldName(field.name.text);
       const innerType = typeSpeller.getGleamType(field.type!);
@@ -512,8 +512,8 @@ class GleamSourceFileGenerator {
         `pub fn ${fnPrefix}${fieldName}(s: ${typeName}) -> ${innerType} {\n`,
       );
       this.push(`case s.${fieldName}_rec {\n`);
-      this.push(`option_.Some(v) -> v\n`);
-      this.push(`option_.None -> ${defExpr}\n`);
+      this.push(`skir_client_.Some(v) -> v\n`);
+      this.push(`skir_client_.Default -> ${defExpr}\n`);
       this.push("}\n");
       this.push("}\n\n");
     }
@@ -534,7 +534,7 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: option_.None,\n`);
+        this.push(`${fieldName}_rec: skir_client_.Default,\n`);
       } else {
         const defExpr = typeSpeller.getDefaultExpression(field.type!);
         this.push(`${fieldName}: ${defExpr},\n`);
@@ -568,7 +568,7 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: option_.Some(${fieldName}),\n`);
+        this.push(`${fieldName}_rec: skir_client_.Some(${fieldName}),\n`);
       } else {
         this.push(`${fieldName}: ${fieldName},\n`);
       }
@@ -621,7 +621,7 @@ class GleamSourceFileGenerator {
       if (isHardRec) {
         this.push(`get: fn(s: ${typeName}) { ${fnPrefix}${fieldName}(s) },\n`);
         this.push(
-          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: option_.Some(v)) },\n`,
+          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: skir_client_.Some(v)) },\n`,
         );
       } else {
         this.push(`get: fn(s: ${typeName}) { s.${fieldName} },\n`);
@@ -679,8 +679,12 @@ class GleamSourceFileGenerator {
         );
         if (isHardRec) {
           this.push(
-            `use ${varName}_rec <- result_.try(struct_serializer_.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
+            `use ${varName}_rec_opt_ <- result_.try(struct_serializer_.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
           );
+          this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
+          this.push(`option_.None -> skir_client_.Default\n`);
+          this.push(`option_.Some(v_) -> skir_client_.Some(v_)\n`);
+          this.push(`}\n`);
         } else {
           this.push(
             `use ${varName} <- result_.try(struct_serializer_.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
@@ -722,8 +726,12 @@ class GleamSourceFileGenerator {
             : typeSpeller.getSerializerExpression(field.type!);
         if (isHardRec) {
           this.push(
-            `use #(${varName}_rec, bits) <- result_.try(struct_serializer_.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
+            `use #(${varName}_rec_opt_, bits) <- result_.try(struct_serializer_.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
           );
+          this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
+          this.push(`option_.None -> skir_client_.Default\n`);
+          this.push(`option_.Some(v_) -> skir_client_.Some(v_)\n`);
+          this.push(`}\n`);
         } else {
           this.push(
             `use #(${varName}, bits) <- result_.try(struct_serializer_.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,

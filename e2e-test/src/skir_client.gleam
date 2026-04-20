@@ -204,6 +204,20 @@ pub fn optional_serializer(
   serializers.optional_serializer(item_serializer)
 }
 
+// =============================================================================
+// Recursive wrapper
+// =============================================================================
+
+/// Wraps a hard-recursive struct field value.
+///
+/// `Default` should be treated the same as the default value of `a`: it is
+/// what you get when the field is absent during deserialization.
+pub type Recursive(a) {
+  /// Absent or unset; treat this like the default value of `a`.
+  Default
+  Some(a)
+}
+
 /// Returns a serializer for List(a) values.
 pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
   serializers.list_serializer(item_serializer)
