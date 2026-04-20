@@ -65,3 +65,10 @@ enum Status {
   }
   error: Error;
 }
+
+enum ZFoo {
+  BAR_ZOO;
+  enum Bar {
+    ZOO;
+  }
+}
