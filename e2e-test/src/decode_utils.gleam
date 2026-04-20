@@ -104,3 +104,15 @@ pub fn skip_n_values(n: Int, bits: BitArray) -> Result(BitArray, String) {
       }
   }
 }
+
+// Encodes an unsigned integer using the skir variable-length wire format.
+// 0..=231:        single byte (the value itself)
+// 232..=65535:    wire 232, then value as u16 LE
+// >= 65536:       wire 233, then value as u32 LE
+pub fn encode_uint32(n: Int) -> BitArray {
+  case n {
+    _ if n <= 231 -> <<n>>
+    _ if n <= 65_535 -> <<232, n:size(16)-little>>
+    _ -> <<233, n:size(32)-little>>
+  }
+}

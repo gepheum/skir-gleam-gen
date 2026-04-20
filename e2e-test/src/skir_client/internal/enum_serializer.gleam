@@ -4,6 +4,7 @@ import gleam/bytes_tree.{type BytesTree}
 import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
+import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
@@ -379,15 +380,19 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
         Ok(True) -> "true"
         Ok(False) -> "false"
         _ ->
-          case decode.run(d, decode.string) {
-            Ok(s) -> json.to_string(json.string(s))
+          case decode.run(d, decode.float) {
+            Ok(f) -> float.to_string(f)
             _ ->
-              case decode.run(d, decode.list(decode.dynamic)) {
-                Ok(lst) ->
-                  "["
-                  <> string.join(list.map(lst, dynamic_to_json_string), ",")
-                  <> "]"
-                _ -> "null"
+              case decode.run(d, decode.string) {
+                Ok(s) -> json.to_string(json.string(s))
+                _ ->
+                  case decode.run(d, decode.list(decode.dynamic)) {
+                    Ok(lst) ->
+                      "["
+                      <> string.join(list.map(lst, dynamic_to_json_string), ",")
+                      <> "]"
+                    _ -> "null"
+                  }
               }
           }
       }
@@ -636,7 +641,7 @@ fn enum_encode(
           case v.constant {
             option.Some(_) ->
               // Constant variant: encode the variant number as a varint.
-              bytes_tree.append(tree, encode_uint32(v.number))
+              bytes_tree.append(tree, decode_utils.encode_uint32(v.number))
             option.None -> {
               // Wrapper variant: header byte(s) then the payload.
               let n = v.number
@@ -648,7 +653,7 @@ fn enum_encode(
                 False ->
                   tree
                   |> bytes_tree.append(<<248>>)
-                  |> bytes_tree.append(encode_uint32(n))
+                  |> bytes_tree.append(decode_utils.encode_uint32(n))
               }
               v.encode_payload(e, t1)
             }
@@ -873,20 +878,12 @@ fn enum_type_descriptor(
 // Internal helpers
 // =============================================================================
 
-fn encode_uint32(n: Int) -> BitArray {
-  case n {
-    _ if n <= 231 -> <<n>>
-    _ if n <= 65_535 -> <<232, n:size(16)-little>>
-    _ -> <<233, n:size(32)-little>>
-  }
-}
-
 fn encode_wrapper_header(number: Int) -> BitArray {
   case number >= 1 && number <= 4 {
     True -> {
       let header_byte = 250 + number
       <<header_byte>>
     }
-    False -> bit_array.append(<<248>>, encode_uint32(number))
+    False -> bit_array.append(<<248>>, decode_utils.encode_uint32(number))
   }
 }

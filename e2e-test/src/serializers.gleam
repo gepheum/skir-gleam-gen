@@ -5,6 +5,7 @@ import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/int
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import gleam/string_tree
@@ -1044,7 +1045,7 @@ fn list_adapter(
           }
           let tree = string_tree.append(tree, "[")
           let #(tree, _) =
-            list_fold(v, #(tree, True), fn(pair, item_val) {
+            list.fold(v, #(tree, True), fn(pair, item_val) {
               let #(t, is_first) = pair
               let t = case is_first {
                 True -> t
@@ -1063,9 +1064,9 @@ fn list_adapter(
       ])
     },
     encode: fn(v, acc) {
-      let count = list_fold(v, 0, fn(n, _) { n + 1 })
+      let count = list.fold(v, 0, fn(n, _) { n + 1 })
       let acc = bytes_tree.append(acc, encode_list_count(count))
-      list_fold(v, acc, fn(bytes_acc, item_val) {
+      list.fold(v, acc, fn(bytes_acc, item_val) {
         item.encode(item_val, bytes_acc)
       })
     },
@@ -1103,17 +1104,6 @@ pub fn keyed_list_serializer(
 // =============================================================================
 // Internal helpers
 // =============================================================================
-
-fn list_fold(list: List(a), acc: b, f: fn(b, a) -> b) -> b {
-  case list {
-    [] -> acc
-    [first, ..rest] -> list_fold(rest, f(acc, first), f)
-  }
-}
-
-fn list_reverse(lst: List(a)) -> List(a) {
-  list_fold(lst, [], fn(acc, x) { [x, ..acc] })
-}
 
 // Encodes a list count using the slot-count wire format:
 // 0 → 246, 1 → 247, 2 → 248, 3 → 249, n>3 → 250 + encode_uint32(n)
@@ -1184,7 +1174,7 @@ fn decode_list_items(
   acc: List(a),
 ) -> Result(#(List(a), BitArray), String) {
   case count {
-    0 -> Ok(#(list_reverse(acc), bits))
+    0 -> Ok(#(list.reverse(acc), bits))
     _ ->
       case item.decode(bits, keep) {
         Error(e) -> Error(e)

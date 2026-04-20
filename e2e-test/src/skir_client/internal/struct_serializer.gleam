@@ -301,6 +301,7 @@ pub fn new_serializer(
   decode_binary decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
     Result(#(s, BitArray), String),
 ) -> serializer.Serializer(s) {
+  let fields_reversed = list.reverse(ordered_fields)
   serializer.make_serializer(
     serializer.make_type_adapter(
       is_default: fn(s) {
@@ -309,6 +310,7 @@ pub fn new_serializer(
       append_json: fn(s, tree, eol_indent) {
         struct_append_json(
           ordered_fields,
+          fields_reversed,
           get_unrecognized,
           recognized_slot_count,
           s,
@@ -319,37 +321,24 @@ pub fn new_serializer(
       decode_json: fn(keep) {
         decode.dynamic
         |> decode.then(fn(d) {
-          case keep {
-            Drop ->
-              case
-                struct_decode_json(
-                  ordered_fields,
-                  decode_dense_json,
-                  d,
-                  default,
-                )
-              {
-                Ok(s) -> decode.success(s)
-                Error(msg) -> decode.failure(default, msg)
-              }
-            Keep ->
-              case
-                struct_decode_json_keep(
-                  ordered_fields,
-                  decode_dense_json,
-                  d,
-                  default,
-                )
-              {
-                Ok(s) -> decode.success(s)
-                Error(msg) -> decode.failure(default, msg)
-              }
+          case
+            struct_decode_json(
+              ordered_fields,
+              decode_dense_json,
+              d,
+              default,
+              keep,
+            )
+          {
+            Ok(s) -> decode.success(s)
+            Error(msg) -> decode.failure(default, msg)
           }
         })
       },
       encode: fn(s, tree) {
         struct_encode(
           ordered_fields,
+          fields_reversed,
           get_unrecognized,
           recognized_slot_count,
           s,
@@ -422,6 +411,7 @@ fn struct_is_default(
 
 fn struct_append_json(
   fields: List(FieldAdapter(s)),
+  fields_reversed: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
@@ -432,6 +422,7 @@ fn struct_append_json(
     "" ->
       append_dense_json(
         fields,
+        fields_reversed,
         get_unrecognized,
         recognized_slot_count,
         s,
@@ -443,6 +434,7 @@ fn struct_append_json(
 
 fn struct_encode(
   fields: List(FieldAdapter(s)),
+  fields_reversed: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
@@ -458,13 +450,13 @@ fn struct_encode(
           #(u.array_len, recognized_slot_count, option.Some(vals))
         }
         False -> {
-          let c = get_slot_count(fields, s)
+          let c = get_slot_count(fields_reversed, s)
           #(c, c, option.None)
         }
       }
     }
     None -> {
-      let c = get_slot_count(fields, s)
+      let c = get_slot_count(fields_reversed, s)
       #(c, c, option.None)
     }
   }
@@ -534,6 +526,7 @@ fn struct_decode(
 
 fn append_dense_json(
   fields: List(FieldAdapter(s)),
+  fields_reversed: List(FieldAdapter(s)),
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
@@ -570,13 +563,13 @@ fn append_dense_json(
           }
         }
         False -> {
-          let slot_count = get_slot_count(fields, s)
+          let slot_count = get_slot_count(fields_reversed, s)
           append_json_slots(fields, s, 0, slot_count, tree)
         }
       }
     }
     None -> {
-      let slot_count = get_slot_count(fields, s)
+      let slot_count = get_slot_count(fields_reversed, s)
       append_json_slots(fields, s, 0, slot_count, tree)
     }
   }
@@ -649,29 +642,13 @@ fn struct_decode_json(
     Result(s, String),
   d: dynamic.Dynamic,
   s: s,
+  keep: UnrecognizedValues,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> decode_dense_json(arr, Drop)
+    Ok(arr) -> decode_dense_json(arr, keep)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
-        Ok(obj) -> from_readable_json(fields, obj, s, Drop)
-        Error(_) -> Ok(s)
-      }
-  }
-}
-
-fn struct_decode_json_keep(
-  fields: List(FieldAdapter(s)),
-  decode_dense_json: fn(List(dynamic.Dynamic), UnrecognizedValues) ->
-    Result(s, String),
-  d: dynamic.Dynamic,
-  s: s,
-) -> Result(s, String) {
-  case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> decode_dense_json(arr, Keep)
-    Error(_) ->
-      case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
-        Ok(obj) -> from_readable_json(fields, obj, s, Keep)
+        Ok(obj) -> from_readable_json(fields, obj, s, keep)
         Error(_) -> Ok(s)
       }
   }
@@ -711,7 +688,7 @@ fn from_readable_json(
   s: s,
   keep: UnrecognizedValues,
 ) -> Result(s, String) {
-  list_fold_result(fields, s, fn(acc, f) {
+  list.try_fold(fields, s, fn(acc, f) {
     case dict.get(obj, f.name) {
       Error(_) -> Ok(acc)
       Ok(v) -> f.decode_json(v, acc, keep)
@@ -732,15 +709,7 @@ fn encode_slot_count(n: Int, tree: BytesTree) -> BytesTree {
     False ->
       tree
       |> bytes_tree.append(<<250>>)
-      |> bytes_tree.append(encode_uint32(n))
-  }
-}
-
-fn encode_uint32(n: Int) -> BitArray {
-  case n {
-    _ if n <= 231 -> <<n>>
-    _ if n <= 65_535 -> <<232, n:size(16)-little>>
-    _ -> <<233, n:size(32)-little>>
+      |> bytes_tree.append(decode_utils.encode_uint32(n))
   }
 }
 
@@ -809,26 +778,11 @@ fn capture_unrecognized_bytes(
 // Utility helpers
 // =============================================================================
 
-fn get_slot_count(fields: List(FieldAdapter(s)), s: s) -> Int {
-  list.fold(fields, 0, fn(max_so_far, f) {
-    case f.is_default(s) {
-      True -> max_so_far
-      False -> int.max(max_so_far, f.number + 1)
-    }
-  })
-}
-
-fn list_fold_result(
-  lst: List(a),
-  acc: b,
-  f: fn(b, a) -> Result(b, String),
-) -> Result(b, String) {
-  case lst {
-    [] -> Ok(acc)
-    [first, ..rest] ->
-      case f(acc, first) {
-        Error(e) -> Error(e)
-        Ok(new_acc) -> list_fold_result(rest, new_acc, f)
-      }
+fn get_slot_count(fields_reversed: List(FieldAdapter(s)), s: s) -> Int {
+  // Fields are ordered by number ascending, so iterating in reverse lets us
+  // stop at the first (highest-numbered) non-default field.
+  case list.find(fields_reversed, fn(f) { !f.is_default(s) }) {
+    Ok(f) -> f.number + 1
+    Error(_) -> 0
   }
 }

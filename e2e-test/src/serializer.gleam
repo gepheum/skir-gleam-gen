@@ -167,7 +167,9 @@ pub fn from_bytes_with_options(
           case
             json.parse(
               from: s,
-              using: serializer.internal_adapter.decode_json(Drop),
+              using: serializer.internal_adapter.decode_json(
+                keep_unrecognized_values,
+              ),
             )
           {
             Ok(v) -> Ok(v)
