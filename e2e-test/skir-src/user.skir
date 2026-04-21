@@ -9,3 +9,10 @@ struct UserProfile {
 struct UserProfiles {
   profiles: [UserProfile|user.user_id];
 }
+
+method GetUser(
+  User
+): UserProfile = 1;
+method AddUser(
+  UserProfile
+): User = 2;
