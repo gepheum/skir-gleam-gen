@@ -317,7 +317,7 @@ fn serve_list(service: Service(meta)) -> RawResponse {
     |> dict.values()
     |> list.map(fn(m) {
       "  {\n"
-      <> "    \"name\": "
+      <> "    \"method\": "
       <> json.to_string(json.string(m.name))
       <> ",\n    \"number\": "
       <> int.to_string(m.number)
