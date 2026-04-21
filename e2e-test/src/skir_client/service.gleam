@@ -316,24 +316,24 @@ fn serve_list(service: Service(meta)) -> RawResponse {
     service.by_name
     |> dict.values()
     |> list.map(fn(m) {
-      "{"
-      <> "\"name\":"
+      "  {\n"
+      <> "    \"name\": "
       <> json.to_string(json.string(m.name))
-      <> ",\"number\":"
+      <> ",\n    \"number\": "
       <> int.to_string(m.number)
-      <> ",\"doc\":"
+      <> ",\n    \"doc\": "
       <> json.to_string(json.string(m.doc))
-      <> ",\"requestType\":"
+      <> ",\n    \"request\": "
       <> m.request_type_descriptor_json
-      <> ",\"responseType\":"
+      <> ",\n    \"response\": "
       <> m.response_type_descriptor_json
-      <> "}"
+      <> "\n  }"
     })
-    |> string.join(",")
+    |> string.join(",\n")
   RawResponse(
     status_code: 200,
     content_type: "application/json",
-    data: "[" <> methods_json <> "]",
+    data: "{\n  \"methods\": [\n" <> methods_json <> "\n  ]\n}",
   )
 }
 
