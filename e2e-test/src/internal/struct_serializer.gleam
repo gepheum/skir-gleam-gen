@@ -1,4 +1,3 @@
-import decode_utils
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict
@@ -9,10 +8,12 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option
+import gleam/result
 import gleam/string
-import gleam/string_tree.{type StringTree}
+import internal/decode_utils
+import internal/json_utils
+import internal/unrecognized
 import serializer.{type UnrecognizedValues, Drop, Keep}
-import skir_client/internal/unrecognized
 import type_descriptor
 
 /// Stores unrecognized fields encountered while deserializing a struct of type
@@ -70,8 +71,8 @@ pub type FieldAdapter(s) {
     number: Int,
     doc: String,
     is_default: fn(s) -> Bool,
-    append_json: fn(s, StringTree, String) -> StringTree,
-    decode_json: fn(dynamic.Dynamic, s, UnrecognizedValues) -> Result(s, String),
+    to_json: fn(s, Bool) -> json.Json,
+    decode_json: fn(s, UnrecognizedValues) -> decode.Decoder(s),
     encode: fn(s, BytesTree) -> BytesTree,
     decode: fn(BitArray, s, UnrecognizedValues) ->
       Result(#(s, BitArray), String),
@@ -97,16 +98,9 @@ pub fn field_spec_to_field_adapter(
         number: number,
         doc: doc,
         is_default: fn(acc) { ta.is_default(get(acc)) },
-        append_json: fn(acc, tree, eol_indent) {
-          ta.append_json(get(acc), tree, eol_indent)
-        },
-        decode_json: fn(d, acc, keep) {
-          case decode.run(d, ta.decode_json(keep)) {
-            Ok(f_val) -> Ok(set(acc, f_val))
-            Error([decode.DecodeError(expected:, found:, ..), ..]) ->
-              Error("expected " <> expected <> " but found " <> found)
-            Error([]) -> Error("decode error")
-          }
+        to_json: fn(acc, readable) { ta.to_json(get(acc), readable) },
+        decode_json: fn(acc, keep) {
+          decode.map(ta.decode_json(keep), fn(f_val) { set(acc, f_val) })
         },
         encode: fn(acc, tree) { ta.encode(get(acc), tree) },
         decode: fn(bits, acc, keep_unrecognized) {
@@ -124,16 +118,13 @@ pub fn field_spec_to_field_adapter(
         number: number,
         doc: doc,
         is_default: fn(acc) { get(acc) == default },
-        append_json: fn(acc, tree, eol_indent) {
-          f().internal_adapter.append_json(get(acc), tree, eol_indent)
+        to_json: fn(acc, readable) {
+          f().internal_adapter.to_json(get(acc), readable)
         },
-        decode_json: fn(d, acc, keep) {
-          case decode.run(d, f().internal_adapter.decode_json(keep)) {
-            Ok(f_val) -> Ok(set(acc, f_val))
-            Error([decode.DecodeError(expected:, found:, ..), ..]) ->
-              Error("expected " <> expected <> " but found " <> found)
-            Error([]) -> Error("decode error")
-          }
+        decode_json: fn(acc, keep) {
+          decode.map(f().internal_adapter.decode_json(keep), fn(f_val) {
+            set(acc, f_val)
+          })
         },
         encode: fn(acc, tree) { f().internal_adapter.encode(get(acc), tree) },
         decode: fn(bits, acc, keep_unrecognized) {
@@ -178,15 +169,8 @@ pub fn decode_json_field(
   case opt_elem {
     option.None -> Ok(default)
     option.Some(elem) ->
-      case decode.run(elem, s.internal_adapter.decode_json(keep)) {
-        Ok(v) -> Ok(v)
-        Error(errs) ->
-          case errs {
-            [decode.DecodeError(expected:, found:, ..)] ->
-              Error("expected " <> expected <> " but found " <> found)
-            _ -> Error("decode error")
-          }
-      }
+      decode.run(elem, s.internal_adapter.decode_json(keep))
+      |> result.map_error(json_utils.decode_errors_to_string)
   }
 }
 
@@ -228,15 +212,9 @@ pub fn decode_json_field_opt(
   case opt_elem {
     option.None -> Ok(option.None)
     option.Some(elem) ->
-      case decode.run(elem, s.internal_adapter.decode_json(keep)) {
-        Ok(v) -> Ok(option.Some(v))
-        Error(errs) ->
-          case errs {
-            [decode.DecodeError(expected:, found:, ..)] ->
-              Error("expected " <> expected <> " but found " <> found)
-            _ -> Error("decode error")
-          }
-      }
+      decode.run(elem, s.internal_adapter.decode_json(keep))
+      |> result.map_error(json_utils.decode_errors_to_string)
+      |> result.map(option.Some)
   }
 }
 
@@ -307,33 +285,30 @@ pub fn new_serializer(
       is_default: fn(s) {
         struct_is_default(ordered_fields, get_unrecognized, s)
       },
-      append_json: fn(s, tree, eol_indent) {
+      to_json: fn(s, readable) {
         struct_append_json(
           ordered_fields,
           fields_reversed,
           get_unrecognized,
           recognized_slot_count,
           s,
-          tree,
-          eol_indent,
+          readable,
         )
       },
       decode_json: fn(keep) {
-        decode.dynamic
-        |> decode.then(fn(d) {
-          case
-            struct_decode_json(
-              ordered_fields,
-              decode_dense_json,
-              d,
-              default,
-              keep,
-            )
-          {
-            Ok(s) -> decode.success(s)
-            Error(msg) -> decode.failure(default, msg)
-          }
-        })
+        use d <- decode.then(decode.dynamic)
+        case
+          struct_decode_json(
+            ordered_fields,
+            decode_dense_json,
+            d,
+            default,
+            keep,
+          )
+        {
+          Ok(s) -> decode.success(s)
+          Error(msg) -> decode.failure(default, msg)
+        }
       },
       encode: fn(s, tree) {
         struct_encode(
@@ -415,20 +390,18 @@ fn struct_append_json(
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
-  tree: StringTree,
-  eol_indent: String,
-) -> StringTree {
-  case eol_indent {
-    "" ->
+  readable: Bool,
+) -> json.Json {
+  case readable {
+    False ->
       append_dense_json(
         fields,
         fields_reversed,
         get_unrecognized,
         recognized_slot_count,
         s,
-        tree,
       )
-    _ -> append_readable_json(fields, s, tree, eol_indent)
+    True -> append_readable_json(fields, s)
   }
 }
 
@@ -530,83 +503,48 @@ fn append_dense_json(
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
-  tree: StringTree,
-) -> StringTree {
-  let tree = string_tree.append(tree, "[")
+) -> json.Json {
   let unrec = get_unrecognized(s)
-  let tree = case unrec {
+  let dense_items = case unrec {
     Some(u) -> {
       let fmt = u.format
       let vals = u.values
       case fmt == unrecognized.DenseJson && bit_array.byte_size(vals) > 0 {
         True -> {
-          let tree =
-            append_json_slots(fields, s, 0, recognized_slot_count, tree)
-          let extra_str = case bit_array.to_string(vals) {
+          let known = append_json_slots(fields, s, 0, recognized_slot_count, [])
+          let extra_values = case bit_array.to_string(vals) {
             Ok(raw) ->
-              raw
-              |> string.trim
-              |> string.drop_start(1)
-              |> string.drop_end(1)
-              |> string.trim
-            Error(_) -> ""
-          }
-          case extra_str {
-            "" -> tree
-            _ -> {
-              let prefix = case recognized_slot_count > 0 {
-                True -> ","
-                False -> ""
+              case json.parse(from: raw, using: decode.list(decode.dynamic)) {
+                Ok(vs) -> list.map(vs, dynamic_to_json)
+                Error(_) -> []
               }
-              string_tree.append(tree, prefix <> extra_str)
-            }
+            Error(_) -> []
           }
+          list.append(known, extra_values)
         }
         False -> {
           let slot_count = get_slot_count(fields_reversed, s)
-          append_json_slots(fields, s, 0, slot_count, tree)
+          append_json_slots(fields, s, 0, slot_count, [])
         }
       }
     }
     None -> {
       let slot_count = get_slot_count(fields_reversed, s)
-      append_json_slots(fields, s, 0, slot_count, tree)
+      append_json_slots(fields, s, 0, slot_count, [])
     }
   }
-  string_tree.append(tree, "]")
+  json.preprocessed_array(dense_items)
 }
 
-fn append_readable_json(
-  fields: List(FieldAdapter(s)),
-  s: s,
-  tree: StringTree,
-  eol_indent: String,
-) -> StringTree {
-  let child_indent = eol_indent <> "  "
-  let tree = string_tree.append(tree, "{")
-  let #(tree, any) =
-    list.fold(fields, #(tree, False), fn(pair, f) {
-      let #(t, had_any) = pair
+fn append_readable_json(fields: List(FieldAdapter(s)), s: s) -> json.Json {
+  let pairs =
+    list.filter_map(fields, fn(f) {
       case f.is_default(s) {
-        True -> #(t, had_any)
-        False -> {
-          let t = case had_any {
-            True -> string_tree.append(t, ",")
-            False -> t
-          }
-          let t = string_tree.append(t, child_indent)
-          let t = string_tree.append(t, json.to_string(json.string(f.name)))
-          let t = string_tree.append(t, ": ")
-          let t = f.append_json(s, t, child_indent)
-          #(t, True)
-        }
+        True -> Error(Nil)
+        False -> Ok(#(f.name, f.to_json(s, True)))
       }
     })
-  let tree = case any {
-    True -> string_tree.append(tree, eol_indent)
-    False -> tree
-  }
-  string_tree.append(tree, "}")
+  json.object(pairs)
 }
 
 fn append_json_slots(
@@ -614,20 +552,16 @@ fn append_json_slots(
   s: s,
   i: Int,
   count: Int,
-  tree: StringTree,
-) -> StringTree {
+  acc: List(json.Json),
+) -> List(json.Json) {
   case i >= count {
-    True -> tree
+    True -> list.reverse(acc)
     False -> {
-      let tree = case i > 0 {
-        True -> string_tree.append(tree, ",")
-        False -> tree
+      let #(value, next_fields) = case fields {
+        [f, ..rest] if f.number == i -> #(f.to_json(s, False), rest)
+        _ -> #(json.int(0), fields)
       }
-      let #(tree, next_fields) = case fields {
-        [f, ..rest] if f.number == i -> #(f.append_json(s, tree, ""), rest)
-        _ -> #(string_tree.append(tree, "0"), fields)
-      }
-      append_json_slots(next_fields, s, i + 1, count, tree)
+      append_json_slots(next_fields, s, i + 1, count, [value, ..acc])
     }
   }
 }
@@ -682,6 +616,43 @@ fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
   }
 }
 
+fn dynamic_to_json(d: dynamic.Dynamic) -> json.Json {
+  case decode.run(d, decode.int) {
+    Ok(n) -> json.int(n)
+    _ ->
+      case decode.run(d, decode.bool) {
+        Ok(b) -> json.bool(b)
+        _ ->
+          case decode.run(d, decode.float) {
+            Ok(f) -> json.float(f)
+            _ ->
+              case decode.run(d, decode.string) {
+                Ok(s) -> json.string(s)
+                _ ->
+                  case decode.run(d, decode.list(decode.dynamic)) {
+                    Ok(lst) ->
+                      json.preprocessed_array(list.map(lst, dynamic_to_json))
+                    _ ->
+                      case
+                        decode.run(
+                          d,
+                          decode.dict(decode.string, decode.dynamic),
+                        )
+                      {
+                        Ok(obj) ->
+                          json.object(
+                            dict.to_list(obj)
+                            |> list.map(fn(p) { #(p.0, dynamic_to_json(p.1)) }),
+                          )
+                        _ -> json.null()
+                      }
+                  }
+              }
+          }
+      }
+  }
+}
+
 fn from_readable_json(
   fields: List(FieldAdapter(s)),
   obj: dict.Dict(String, dynamic.Dynamic),
@@ -691,7 +662,9 @@ fn from_readable_json(
   list.try_fold(fields, s, fn(acc, f) {
     case dict.get(obj, f.name) {
       Error(_) -> Ok(acc)
-      Ok(v) -> f.decode_json(v, acc, keep)
+      Ok(v) ->
+        decode.run(v, f.decode_json(acc, keep))
+        |> result.map_error(json_utils.decode_errors_to_string)
     }
   })
 }

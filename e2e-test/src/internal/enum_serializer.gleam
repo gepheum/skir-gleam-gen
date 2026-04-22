@@ -1,4 +1,3 @@
-import decode_utils
 import gleam/bit_array
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dict
@@ -11,9 +10,10 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
-import gleam/string_tree.{type StringTree}
+import internal/decode_utils
+import internal/json_utils
+import internal/unrecognized
 import serializer.{type UnrecognizedValues, Drop, Keep}
-import skir_client/internal/unrecognized
 import type_descriptor
 
 /// Stores an unrecognized variant encountered while deserializing an enum of
@@ -70,12 +70,12 @@ pub type VariantAdapter(e) {
     doc: String,
     /// For constant variants: `Some(value)`. For wrapper variants: `None`.
     constant: Option(e),
-    /// Appends the full JSON representation of this variant.
+    /// JSON representation of this variant.
     /// The given enum value MUST be this variant.
-    append_json: fn(e, StringTree, String) -> StringTree,
+    to_json: fn(e, Bool) -> json.Json,
     /// For wrapper variants: decodes the payload JSON into `e`.
     /// For constant variants: returns `Ok(instance)` unconditionally.
-    wrap_from_json: fn(dynamic.Dynamic, UnrecognizedValues) -> Result(e, String),
+    wrap_from_json: fn(UnrecognizedValues) -> decode.Decoder(e),
     /// For wrapper variants: encodes the payload onto the tree.
     /// For constant variants: returns the tree unchanged.
     encode_payload: fn(e, BytesTree) -> BytesTree,
@@ -110,13 +110,13 @@ pub fn constant_variant(
     number:,
     doc:,
     constant: option.Some(instance),
-    append_json: fn(_e, tree, eol_indent) {
-      case eol_indent {
-        "" -> string_tree.append(tree, int.to_string(number))
-        _ -> string_tree.append(tree, json.to_string(json.string(name)))
+    to_json: fn(_e, readable) {
+      case readable {
+        False -> json.int(number)
+        True -> json.string(name)
       }
     },
-    wrap_from_json: fn(_d, _keep) { Ok(instance) },
+    wrap_from_json: fn(_keep) { decode.success(instance) },
     encode_payload: fn(_e, tree) { tree },
     wrap_decode: fn(bits, _keep) { Ok(#(instance, bits)) },
     wrap_default: fn() { option.None },
@@ -144,43 +144,23 @@ pub fn wrapper_variant(
     number:,
     doc:,
     constant: option.None,
-    append_json: fn(e, tree, eol_indent) {
+    to_json: fn(e, readable) {
       let ta = serializer_fn().internal_adapter
       let v = unwrap(e)
-      case eol_indent {
-        "" -> {
-          let t1 = string_tree.append(tree, "[" <> int.to_string(number) <> ",")
-          let t2 = ta.append_json(v, t1, "")
-          string_tree.append(t2, "]")
-        }
-        _ -> {
-          let child = eol_indent <> "  "
-          let t1 =
-            string_tree.append(
-              tree,
-              "{"
-                <> child
-                <> json.to_string(json.string("kind"))
-                <> ": "
-                <> json.to_string(json.string(name))
-                <> ","
-                <> child
-                <> json.to_string(json.string("value"))
-                <> ": ",
-            )
-          let t2 = ta.append_json(v, t1, child)
-          string_tree.append(string_tree.append(t2, eol_indent), "}")
+      case readable {
+        False ->
+          json.preprocessed_array([json.int(number), ta.to_json(v, False)])
+        True -> {
+          json.object([
+            #("kind", json.string(name)),
+            #("value", ta.to_json(v, True)),
+          ])
         }
       }
     },
-    wrap_from_json: fn(d, keep) {
+    wrap_from_json: fn(keep) {
       let ta = serializer_fn().internal_adapter
-      case decode.run(d, ta.decode_json(keep)) {
-        Ok(v) -> Ok(wrap(v))
-        Error([decode.DecodeError(expected:, found:, ..), ..]) ->
-          Error("expected " <> expected <> " but found " <> found)
-        Error([]) -> Error("decode error")
-      }
+      decode.map(ta.decode_json(keep), wrap)
     },
     encode_payload: fn(e, tree) {
       let ta = serializer_fn().internal_adapter
@@ -263,35 +243,32 @@ pub fn new_serializer(
           _ -> False
         }
       },
-      append_json: fn(e, tree, eol_indent) {
+      to_json: fn(e, readable) {
         enum_append_json(
           variants,
           get_kind_ordinal,
           get_unrecognized,
           e,
-          tree,
-          eol_indent,
+          readable,
         )
       },
       decode_json: fn(keep) {
-        decode.dynamic
-        |> decode.then(fn(d) {
-          case
-            enum_decode_json(
-              variants_by_number,
-              variants_by_name,
-              variants_by_name_lower,
-              removed_numbers,
-              unknown_default,
-              wrap_unrecognized,
-              d,
-              keep,
-            )
-          {
-            Ok(e) -> decode.success(e)
-            Error(msg) -> decode.failure(unknown_default, msg)
-          }
-        })
+        use d <- decode.then(decode.dynamic)
+        case
+          enum_decode_json(
+            variants_by_number,
+            variants_by_name,
+            variants_by_name_lower,
+            removed_numbers,
+            unknown_default,
+            wrap_unrecognized,
+            d,
+            keep,
+          )
+        {
+          Ok(e) -> decode.success(e)
+          Error(msg) -> decode.failure(unknown_default, msg)
+        }
       },
       encode: fn(e, tree) {
         enum_encode(variants, get_kind_ordinal, get_unrecognized, e, tree)
@@ -329,41 +306,77 @@ fn enum_append_json(
   get_kind_ordinal: fn(e) -> Int,
   get_unrecognized: fn(e) -> UnrecognizedVariant(e),
   e: e,
-  tree: StringTree,
-  eol_indent: String,
-) -> StringTree {
+  readable: Bool,
+) -> json.Json {
   case get_kind_ordinal(e) {
-    0 -> unknown_to_json(get_unrecognized(e), tree, eol_indent)
+    0 -> unknown_to_json(get_unrecognized(e), readable)
     ko ->
       case list.drop(variants, ko - 1) |> list.first {
-        Error(_) -> string_tree.append(tree, "0")
-        Ok(v) -> v.append_json(e, tree, eol_indent)
+        Error(_) -> json.int(0)
+        Ok(v) -> v.to_json(e, readable)
       }
   }
 }
 
-fn unknown_to_json(
-  unrec: UnrecognizedVariant(e),
-  tree: StringTree,
-  eol_indent: String,
-) -> StringTree {
-  case eol_indent {
-    "" ->
+fn unknown_to_json(unrec: UnrecognizedVariant(e), readable: Bool) -> json.Json {
+  case readable {
+    True -> json.string("UNKNOWN")
+    False ->
       case unrec {
-        None -> string_tree.append(tree, "0")
+        None -> json.int(0)
         Some(data) ->
           case data.format {
             unrecognized.DenseJson -> {
               let raw = data.value
               case bit_array.to_string(raw) {
-                Ok(s) if s != "" -> string_tree.append(tree, s)
-                _ -> string_tree.append(tree, "0")
+                Ok(s) if s != "" ->
+                  case json.parse(from: s, using: decode.dynamic) {
+                    Ok(d) -> dynamic_to_json(d)
+                    Error(_) -> json.int(0)
+                  }
+                _ -> json.int(0)
               }
             }
-            unrecognized.BinaryBytes -> string_tree.append(tree, "0")
+            unrecognized.BinaryBytes -> json.int(0)
           }
       }
-    _ -> string_tree.append(tree, json.to_string(json.string("UNKNOWN")))
+  }
+}
+
+fn dynamic_to_json(d: dynamic.Dynamic) -> json.Json {
+  case decode.run(d, decode.int) {
+    Ok(n) -> json.int(n)
+    _ ->
+      case decode.run(d, decode.bool) {
+        Ok(b) -> json.bool(b)
+        _ ->
+          case decode.run(d, decode.float) {
+            Ok(f) -> json.float(f)
+            _ ->
+              case decode.run(d, decode.string) {
+                Ok(s) -> json.string(s)
+                _ ->
+                  case decode.run(d, decode.list(decode.dynamic)) {
+                    Ok(lst) ->
+                      json.preprocessed_array(list.map(lst, dynamic_to_json))
+                    _ ->
+                      case
+                        decode.run(
+                          d,
+                          decode.dict(decode.string, decode.dynamic),
+                        )
+                      {
+                        Ok(obj) ->
+                          json.object(
+                            dict.to_list(obj)
+                            |> list.map(fn(p) { #(p.0, dynamic_to_json(p.1)) }),
+                          )
+                        _ -> json.null()
+                      }
+                  }
+              }
+          }
+      }
   }
 }
 
@@ -505,7 +518,11 @@ fn enum_decode_json(
                                   )
                                 }
                               }
-                            Ok(v) -> v.wrap_from_json(val_d, keep)
+                            Ok(v) ->
+                              decode.run(val_d, v.wrap_from_json(keep))
+                              |> result.map_error(
+                                json_utils.decode_errors_to_string,
+                              )
                           }
                       }
                   }
@@ -535,7 +552,11 @@ fn enum_decode_json(
                             option.Some(c) -> Ok(c)
                             option.None ->
                               case dict.get(obj, "value") {
-                                Ok(val_d) -> v.wrap_from_json(val_d, keep)
+                                Ok(val_d) ->
+                                  decode.run(val_d, v.wrap_from_json(keep))
+                                  |> result.map_error(
+                                    json_utils.decode_errors_to_string,
+                                  )
                                 Error(_) ->
                                   Ok(option.unwrap(
                                     v.wrap_default(),

@@ -13,7 +13,7 @@ import gleam/int
 import gleam/io
 import gleam/option
 import mist
-import skir_client/service.{type Service, type ServiceError, ServiceError}
+import service.{type Service, type ServiceError, ServiceError}
 import skirout/user.{type User, type UserProfile, User, UserProfile} as user_out
 
 // ---------------------------------------------------------------------------

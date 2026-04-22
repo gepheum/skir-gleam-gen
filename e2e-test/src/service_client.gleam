@@ -105,7 +105,7 @@ pub fn invoke_remote(
 ) -> Result(resp, RpcError) {
   // Serialize the request as dense JSON.
   let request_json =
-    serializer.to_dense_json(method.request_serializer, request_value)
+    serializer.to_dense_json_code(method.request_serializer, request_value)
 
   // Wire body: "MethodName:number::requestJson"
   // The empty third field signals that the server may reply in dense JSON.
@@ -162,7 +162,7 @@ pub fn invoke_remote(
           Error(RpcError(status_code: resp.status, message: message))
         }
         True ->
-          serializer.from_json_with_options(
+          serializer.from_json_code_with_options(
             method.response_serializer,
             resp.body,
             keep_unrecognized_values: Keep,

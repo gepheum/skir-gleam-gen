@@ -71,7 +71,7 @@ fn make_erased_method(
       False -> Drop
     }
     case
-      serializer.from_json_with_options(
+      serializer.from_json_code_with_options(
         method.request_serializer,
         request_json,
         keep_unrecognized_values: keep,
@@ -85,9 +85,12 @@ fn make_erased_method(
           Ok(resp) -> {
             let json_str = case readable {
               True ->
-                serializer.to_readable_json(method.response_serializer, resp)
+                serializer.to_readable_json_code(
+                  method.response_serializer,
+                  resp,
+                )
               False ->
-                serializer.to_dense_json(method.response_serializer, resp)
+                serializer.to_dense_json_code(method.response_serializer, resp)
             }
             Ok(json_str)
           }

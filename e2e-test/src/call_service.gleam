@@ -6,7 +6,7 @@
 import gleam/httpc
 import gleam/int
 import gleam/io
-import skir_client/service_client
+import service_client
 import skirout/user.{User, UserProfile} as user_out
 
 pub fn main() {

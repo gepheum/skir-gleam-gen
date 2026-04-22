@@ -28,8 +28,8 @@ type EvaluatedValue {
 fn make_ev(value: a, serializer: skir_client.Serializer(a)) -> EvaluatedValue {
   EvaluatedValue(
     to_bytes: fn() { skir_client.to_bytes(serializer, value) },
-    to_dense_json: fn() { skir_client.to_dense_json(serializer, value) },
-    to_readable_json: fn() { skir_client.to_readable_json(serializer, value) },
+    to_dense_json: fn() { skir_client.to_dense_json_code(serializer, value) },
+    to_readable_json: fn() { skir_client.to_readable_json_code(serializer, value) },
     type_descriptor_json: fn() {
       skir_client.type_descriptor_to_json(skir_client.type_descriptor(
         serializer,
@@ -37,7 +37,7 @@ fn make_ev(value: a, serializer: skir_client.Serializer(a)) -> EvaluatedValue {
     },
     from_json_keep: fn(json) {
       case
-        skir_client.from_json_with_options(
+        skir_client.from_json_code_with_options(
           serializer,
           json,
           keep_unrecognized_values: Keep,
@@ -48,7 +48,7 @@ fn make_ev(value: a, serializer: skir_client.Serializer(a)) -> EvaluatedValue {
       }
     },
     from_json_drop: fn(json) {
-      case skir_client.from_json(serializer, json) {
+      case skir_client.from_json_code(serializer, json) {
         Ok(v) -> Ok(make_ev(v, serializer))
         Error(e) -> Error(e)
       }
@@ -165,7 +165,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValuePointFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_with_options(
+      skir_client.from_json_code_with_options(
         goldens.point_serializer(),
         json,
         keep_unrecognized_values: Keep,
@@ -175,7 +175,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValuePointFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json(goldens.point_serializer(), json)
+      skir_client.from_json_code(goldens.point_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromJsonDropUnrecognized: " <> e })
     }
@@ -197,7 +197,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueColorFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_with_options(
+      skir_client.from_json_code_with_options(
         goldens.color_serializer(),
         json,
         keep_unrecognized_values: Keep,
@@ -207,7 +207,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueColorFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json(goldens.color_serializer(), json)
+      skir_client.from_json_code(goldens.color_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromJsonDropUnrecognized: " <> e })
     }
@@ -229,7 +229,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueMyEnumFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_with_options(
+      skir_client.from_json_code_with_options(
         goldens.my_enum_serializer(),
         json,
         keep_unrecognized_values: Keep,
@@ -239,7 +239,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueMyEnumFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json(goldens.my_enum_serializer(), json)
+      skir_client.from_json_code(goldens.my_enum_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromJsonDropUnrecognized: " <> e })
     }
@@ -261,7 +261,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueEnumAFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_with_options(
+      skir_client.from_json_code_with_options(
         goldens.enum_a_serializer(),
         json,
         keep_unrecognized_values: Keep,
@@ -271,7 +271,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueEnumAFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json(goldens.enum_a_serializer(), json)
+      skir_client.from_json_code(goldens.enum_a_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromJsonDropUnrecognized: " <> e })
     }
@@ -293,7 +293,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueEnumBFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_with_options(
+      skir_client.from_json_code_with_options(
         goldens.enum_b_serializer(),
         json,
         keep_unrecognized_values: Keep,
@@ -303,7 +303,7 @@ fn evaluate_typed_value(
     }
     goldens.TypedValueEnumBFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json(goldens.enum_b_serializer(), json)
+      skir_client.from_json_code(goldens.enum_b_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromJsonDropUnrecognized: " <> e })
     }
@@ -748,8 +748,8 @@ fn verify_reserialize_large_string(
 
   // Dense JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_dense_json(ser, s)
-    case skir_client.from_json(ser, json) {
+    let json = skir_client.to_dense_json_code(ser, s)
+    case skir_client.from_json_code(ser, json) {
       Error(e) -> Error("large string dense JSON round-trip: " <> e)
       Ok(round_trip) ->
         case round_trip == s {
@@ -767,8 +767,8 @@ fn verify_reserialize_large_string(
 
   // Readable JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_readable_json(ser, s)
-    case skir_client.from_json(ser, json) {
+    let json = skir_client.to_readable_json_code(ser, s)
+    case skir_client.from_json_code(ser, json) {
       Error(e) -> Error("large string readable JSON round-trip: " <> e)
       Ok(round_trip) ->
         case round_trip == s {
@@ -829,8 +829,8 @@ fn verify_reserialize_large_array(
 
   // Dense JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_dense_json(ser, array)
-    case skir_client.from_json(ser, json) {
+    let json = skir_client.to_dense_json_code(ser, array)
+    case skir_client.from_json_code(ser, json) {
       Error(e) -> Error("large array dense JSON round-trip: " <> e)
       Ok(round_trip) ->
         case is_correct(round_trip) {
@@ -849,8 +849,8 @@ fn verify_reserialize_large_array(
 
   // Readable JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_readable_json(ser, array)
-    case skir_client.from_json(ser, json) {
+    let json = skir_client.to_readable_json_code(ser, array)
+    case skir_client.from_json_code(ser, json) {
       Error(e) -> Error("large array readable JSON round-trip: " <> e)
       Ok(round_trip) ->
         case is_correct(round_trip) {
@@ -906,7 +906,7 @@ fn verify_enum_a_from_json_is_constant(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_string(a.actual))
   case
-    skir_client.from_json_with_options(
+    skir_client.from_json_code_with_options(
       goldens.enum_a_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {
@@ -962,7 +962,7 @@ fn verify_enum_b_from_json_is_wrapper_b(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_string(a.actual))
   case
-    skir_client.from_json_with_options(
+    skir_client.from_json_code_with_options(
       goldens.enum_b_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {

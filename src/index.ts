@@ -1,5 +1,4 @@
-// TODO: check what happens with the 'decode' thing, what it does with the BitArray when you take a subslice
-// TODO: check the UnrecognizedValues parameter to Serializer
+// TODO: rename timestamp_default to unix_epoch
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: review everything
 // TODO: look at generated comments
@@ -229,10 +228,10 @@ const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
   ["timestamp", "timestamp_"],
   ["skir_client", "skir_client_"],
-  ["skir_client/internal/struct_serializer", "struct_serializer_"],
+  ["internal/struct_serializer", "struct_serializer_"],
   ["gleam/list", "list_"],
   ["gleam/result", "result_"],
-  ["skir_client/internal/enum_serializer", "enum_serializer_"],
+  ["internal/enum_serializer", "enum_serializer_"],
 ] as const;
 
 class GleamSourceFileGenerator {
@@ -484,7 +483,7 @@ class GleamSourceFileGenerator {
     if (value.kind !== "object") throw new Error("Expected object for struct");
     const typeName = this.typeNameFor(record);
     const prefix = this.qualifiedPrefixFor(record);
-    this.neededModules.add("skir_client/internal/struct_serializer");
+    this.neededModules.add("internal/struct_serializer");
     // Sort fields alphabetically to match the generated type definition.
     const fields = [...record.record.fields].sort((a, b) =>
       a.name.text.localeCompare(b.name.text),
@@ -595,7 +594,7 @@ class GleamSourceFileGenerator {
 
   private writeTypesForStruct(struct: RecordLocation): void {
     this.neededModules.add("skir_client");
-    this.neededModules.add("skir_client/internal/struct_serializer");
+    this.neededModules.add("internal/struct_serializer");
     this.neededModules.add("gleam/list");
     this.neededModules.add("gleam/result");
     const { typeSpeller } = this;
@@ -878,7 +877,7 @@ class GleamSourceFileGenerator {
 
   private writeTypesForEnum(record: RecordLocation): void {
     this.neededModules.add("skir_client");
-    this.neededModules.add("skir_client/internal/enum_serializer");
+    this.neededModules.add("internal/enum_serializer");
     const { typeSpeller } = this;
     const typeName = this.typeNameFor(record);
     const fnPrefix = this.fnPrefixFor(record);

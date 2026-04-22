@@ -1,9 +1,9 @@
 import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic/decode.{type Decoder}
+import gleam/json
 import gleam/option.{type Option}
-import gleam/string_tree.{type StringTree}
+import internal/serializers
 import serializer
-import serializers
 import timestamp
 import type_descriptor.{type TypeDescriptor}
 
@@ -57,7 +57,7 @@ pub type EnumVariant =
 /// Used internally by the Skir client library and by generated code.
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
-  append_json append_json: fn(a, StringTree, String) -> StringTree,
+  to_json to_json: fn(a, Bool) -> json.Json,
   decode_json decode_json: fn(UnrecognizedValues) -> Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, UnrecognizedValues) ->
@@ -66,7 +66,7 @@ pub fn make_type_adapter(
 ) -> TypeAdapter(a) {
   serializer.make_type_adapter(
     is_default:,
-    append_json:,
+    to_json:,
     decode_json:,
     encode:,
     decode:,
@@ -84,28 +84,56 @@ pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
 // Core serialization API
 // =============================================================================
 
-/// Serializes a value to dense (field-index-based) JSON.
-pub fn to_dense_json(serializer: Serializer(a), value: a) -> String {
+/// Serializes a value to dense (field-index-based) JSON value.
+pub fn to_dense_json(serializer: Serializer(a), value: a) -> json.Json {
   serializer.to_dense_json(serializer, value)
 }
 
-/// Serializes a value to readable (field-name-based, indented) JSON.
-pub fn to_readable_json(serializer: Serializer(a), value: a) -> String {
+/// Serializes a value to dense (field-index-based) JSON code.
+pub fn to_dense_json_code(serializer: Serializer(a), value: a) -> String {
+  serializer.to_dense_json_code(serializer, value)
+}
+
+/// Serializes a value to readable (field-name-based) JSON value.
+pub fn to_readable_json(serializer: Serializer(a), value: a) -> json.Json {
   serializer.to_readable_json(serializer, value)
 }
 
-/// Deserializes a value from a JSON string.
-pub fn from_json(serializer: Serializer(a), json: String) -> Result(a, String) {
-  serializer.from_json(serializer, json)
+/// Serializes a value to readable, 2-space-indented JSON code.
+pub fn to_readable_json_code(serializer: Serializer(a), value: a) -> String {
+  serializer.to_readable_json_code(serializer, value)
 }
 
-/// Deserializes a value from a JSON string with options.
-pub fn from_json_with_options(
+/// Deserializes a value from a JSON code string.
+pub fn from_json_code(
+  serializer: Serializer(a),
+  json: String,
+) -> Result(a, String) {
+  serializer.from_json_code(serializer, json)
+}
+
+/// Deserializes a value from a JSON code string with options.
+pub fn from_json_code_with_options(
   serializer: Serializer(a),
   json: String,
   keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
 ) -> Result(a, String) {
-  serializer.from_json_with_options(serializer, json, keep_unrecognized_values:)
+  serializer.from_json_code_with_options(
+    serializer,
+    json,
+    keep_unrecognized_values:,
+  )
+}
+
+pub fn json_decoder(serializer: Serializer(a)) -> Decoder(a) {
+  serializer.json_decoder(serializer)
+}
+
+pub fn json_decoder_with_options(
+  serializer: Serializer(a),
+  keep_unrecognized_values keep_unrecognized_values: UnrecognizedValues,
+) -> Decoder(a) {
+  serializer.json_decoder_with_options(serializer, keep_unrecognized_values:)
 }
 
 /// Serializes a value to a compact binary format.
@@ -266,7 +294,8 @@ pub fn type_descriptor_from_json(json: String) -> Result(TypeDescriptor, String)
 
 // =============================================================================
 // TypeSignature constructors
-// (Used by generated code — Gleam can't re-export constructors, so we wrap.)
+// (Used by generated code — Gleam can't access enum constructors through
+// qualified names, so we provide wrapper functions.)
 // =============================================================================
 
 pub fn type_sig_primitive(p: PrimitiveType) -> TypeSignature {
@@ -323,3 +352,5 @@ pub fn prim_string() -> PrimitiveType {
 pub fn prim_bytes() -> PrimitiveType {
   type_descriptor.Bytes
 }
+
+
