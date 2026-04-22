@@ -1,7 +1,7 @@
 import gleam/option.{None, Some}
 import gleeunit/should
-import serializers
 import serializer
+import serializers
 import timestamp
 import type_descriptor
 
