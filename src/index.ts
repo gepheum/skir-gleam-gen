@@ -226,6 +226,7 @@ function computeModuleNames(records: readonly RecordLocation[]): {
 /** Ordered list of client library module paths and their import aliases. */
 const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
+  ["gleam/dynamic/decode", "decode_"],
   ["timestamp", "timestamp_"],
   ["internal/recursive", "recursive_"],
   ["internal/method", "method_"],
@@ -743,28 +744,28 @@ class GleamSourceFileGenerator {
     const fieldsBySlot = new Map(fieldsByNumber.map((f) => [f.number, f]));
 
     this.push(`decode_dense_json: fn(arr, keep) {\n`);
-    this.push(`let arr_len = list_.length(arr)\n`);
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
       if (field) {
+        this.neededModules.add("gleam/dynamic/decode");
         const varName = toFieldName(field.name.text);
         const defExpr = typeSpeller.getFieldDefaultExpression(field);
         const serExpr =
           field.isRecursive === false
             ? `${varName}_serializer`
             : typeSpeller.getFieldSerializerExpression(field);
+        this.push(`use #(${varName}, arr) <- result_.try(case arr {\n`);
+        this.push(`[] -> Ok(#(${defExpr}, []))\n`);
         this.push(
-          `let #(slot_${slot}_dyn, arr) = struct_serializer_.take_slot(arr)\n`,
+          `[elem, ..arr] -> decode_.run(elem, ${serExpr}.internal_adapter.decode_json(keep)) |> result_.map(fn(v) { #(v, arr) })\n`,
         );
-        this.push(
-          `use ${varName} <- result_.try(struct_serializer_.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
-        );
+        this.push(`})\n`);
       } else {
-        this.push(`let #(_, arr) = struct_serializer_.take_slot(arr)\n`);
+        this.push(`let arr = case arr { [] -> [] [_, ..arr] -> arr }\n`);
       }
     }
     this.push(
-      `let unrecognized_ = struct_serializer_.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
+      `let unrecognized_ = struct_serializer_.make_unrecognized_fields_json(arr, list_.length(arr) + ${numSlots}, keep)\n`,
     );
     const structArgsDense =
       fieldArgLabels(fieldsByNumber) +
@@ -787,8 +788,13 @@ class GleamSourceFileGenerator {
             ? `${varName}_serializer`
             : typeSpeller.getFieldSerializerExpression(field);
         this.push(
-          `use #(${varName}, bits) <- result_.try(struct_serializer_.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+          `use #(${varName}, bits) <- result_.try(case slots_to_fill > ${slot} {\n`,
         );
+        this.push(
+          `active if active -> ${serExpr}.internal_adapter.decode(bits, keep)\n`,
+        );
+        this.push(`_ -> Ok(#(${defExpr}, bits))\n`);
+        this.push(`})\n`);
       } else {
         this.push(
           `use bits <- result_.try(struct_serializer_.skip_binary_slot(bits, slots_to_fill > ${slot}))\n`,
@@ -864,7 +870,7 @@ class GleamSourceFileGenerator {
     this.push(`module_path: ${JSON.stringify(record.modulePath)},\n`);
     this.push(`doc: ${JSON.stringify(docToCommentText(record.record.doc))},\n`);
     this.push(`variants: [\n`);
-    for (const [i, variant] of variants.entries()) {
+    for (const variant of variants) {
       const ctorName =
         this.ctorNames.get(`${record.record.key}:${variant.name.text}`) ??
         typeName + convertCase(variant.name.text, "UpperCamel");

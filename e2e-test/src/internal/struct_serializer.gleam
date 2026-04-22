@@ -147,48 +147,6 @@ pub fn field_spec_to_field_adapter(
 // Helpers for generated decode_dense_json / decode_binary callbacks
 // =============================================================================
 
-/// Removes and returns the head of a list, or `None` if empty.
-/// Used by generated `decode_dense_json` lambdas to consume one array slot.
-pub fn take_slot(
-  arr: List(dynamic.Dynamic),
-) -> #(option.Option(dynamic.Dynamic), List(dynamic.Dynamic)) {
-  case arr {
-    [] -> #(option.None, [])
-    [h, ..t] -> #(option.Some(h), t)
-  }
-}
-
-/// Decodes one JSON field value from an optional array element.
-/// Returns `default` when the element is absent.
-pub fn decode_json_field(
-  opt_elem: option.Option(dynamic.Dynamic),
-  default: f,
-  keep: UnrecognizedValues,
-  serializer s: serializer.Serializer(f),
-) -> Result(f, String) {
-  case opt_elem {
-    option.None -> Ok(default)
-    option.Some(elem) ->
-      decode.run(elem, s.internal_adapter.decode_json(keep))
-      |> result.map_error(json_utils.decode_errors_to_string)
-  }
-}
-
-/// Decodes one binary field value.
-/// Returns `#(default, bits)` when the slot is not active (`active=False`).
-pub fn decode_binary_field(
-  bits: BitArray,
-  active: Bool,
-  default: f,
-  keep: UnrecognizedValues,
-  serializer s: serializer.Serializer(f),
-) -> Result(#(f, BitArray), String) {
-  case active {
-    False -> Ok(#(default, bits))
-    True -> s.internal_adapter.decode(bits, keep)
-  }
-}
-
 /// Skips one binary slot if active, otherwise returns bits unchanged.
 pub fn skip_binary_slot(
   bits: BitArray,
@@ -197,42 +155,6 @@ pub fn skip_binary_slot(
   case active {
     False -> Ok(bits)
     True -> decode_utils.skip_value(bits)
-  }
-}
-
-/// Creates unrecognized JSON fields data from the remaining array elements.
-/// Returns `None` when `keep=False` or there are no extra elements.
-/// Like `decode_json_field`, but returns `None` when the element is absent.
-/// Used by generated code for hard-recursive fields.
-pub fn decode_json_field_opt(
-  opt_elem: option.Option(dynamic.Dynamic),
-  keep: UnrecognizedValues,
-  serializer s: serializer.Serializer(f),
-) -> Result(option.Option(f), String) {
-  case opt_elem {
-    option.None -> Ok(option.None)
-    option.Some(elem) ->
-      decode.run(elem, s.internal_adapter.decode_json(keep))
-      |> result.map_error(json_utils.decode_errors_to_string)
-      |> result.map(option.Some)
-  }
-}
-
-/// Like `decode_binary_field`, but returns `None` when the slot is inactive.
-/// Used by generated code for hard-recursive fields.
-pub fn decode_binary_field_opt(
-  bits: BitArray,
-  active: Bool,
-  keep: UnrecognizedValues,
-  serializer s: serializer.Serializer(f),
-) -> Result(#(option.Option(f), BitArray), String) {
-  case active {
-    False -> Ok(#(option.None, bits))
-    True ->
-      case s.internal_adapter.decode(bits, keep) {
-        Ok(#(v, rest)) -> Ok(#(option.Some(v), rest))
-        Error(e) -> Error(e)
-      }
   }
 }
 
@@ -275,7 +197,7 @@ pub fn new_serializer(
     List(dynamic.Dynamic),
     UnrecognizedValues,
   ) ->
-    Result(s, String),
+    Result(s, List(decode.DecodeError)),
   decode_binary decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
     Result(#(s, BitArray), String),
 ) -> serializer.Serializer(s) {
@@ -573,13 +495,15 @@ fn append_json_slots(
 fn struct_decode_json(
   fields: List(FieldAdapter(s)),
   decode_dense_json: fn(List(dynamic.Dynamic), UnrecognizedValues) ->
-    Result(s, String),
+    Result(s, List(decode.DecodeError)),
   d: dynamic.Dynamic,
   s: s,
   keep: UnrecognizedValues,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
-    Ok(arr) -> decode_dense_json(arr, keep)
+    Ok(arr) ->
+      decode_dense_json(arr, keep)
+      |> result.map_error(json_utils.decode_errors_to_string)
     Error(_) ->
       case decode.run(d, decode.dict(decode.string, decode.dynamic)) {
         Ok(obj) -> from_readable_json(fields, obj, s, keep)
