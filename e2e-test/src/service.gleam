@@ -346,18 +346,22 @@ fn serve_list(service: Service(meta)) -> RawResponse {
     service.by_name
     |> dict.values()
     |> list.map(fn(m) {
-      "  {\n"
-      <> "    \"method\": "
+      let request_json =
+        indent_multiline(m.request_type_descriptor_json, "      ")
+      let response_json =
+        indent_multiline(m.response_type_descriptor_json, "      ")
+      "    {\n"
+      <> "      \"method\": "
       <> json.to_string(json.string(m.name))
-      <> ",\n    \"number\": "
+      <> ",\n      \"number\": "
       <> int.to_string(m.number)
-      <> ",\n    \"doc\": "
+      <> ",\n      \"doc\": "
       <> json.to_string(json.string(m.doc))
-      <> ",\n    \"request\": "
-      <> m.request_type_descriptor_json
-      <> ",\n    \"response\": "
-      <> m.response_type_descriptor_json
-      <> "\n  }"
+      <> ",\n      \"request\": "
+      <> request_json
+      <> ",\n      \"response\": "
+      <> response_json
+      <> "\n    }"
     })
     |> string.join(",\n")
   RawResponse(
@@ -365,6 +369,22 @@ fn serve_list(service: Service(meta)) -> RawResponse {
     content_type: "application/json",
     data: "{\n  \"methods\": [\n" <> methods_json <> "\n  ]\n}",
   )
+}
+
+fn indent_multiline(text: String, indent: String) -> String {
+  case string.split(text, "\n") {
+    [] -> text
+    [first, ..rest] ->
+      first
+      <> case rest {
+        [] -> ""
+        _ ->
+          "\n"
+          <> rest
+          |> list.map(fn(line) { indent <> line })
+          |> string.join("\n")
+      }
+  }
 }
 
 // =============================================================================
@@ -375,6 +395,7 @@ fn serve_studio(service: Service(meta)) -> RawResponse {
   let html =
     "<!DOCTYPE html>"
     <> "<html><head><meta charset=\"utf-8\"><title>Skir Studio</title>"
+    <> "<link rel=\"icon\" href=\"data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐙</text></svg>\">"
     <> "<script src=\""
     <> service.studio_url
     <> "\"></script>"
