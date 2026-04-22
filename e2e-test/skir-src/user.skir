@@ -1,5 +1,6 @@
 struct User {
   user_id: int64;
+  name: string;
 }
 
 struct UserProfile {
@@ -13,6 +14,7 @@ struct UserProfiles {
 method GetUser(
   User
 ): UserProfile = 1;
+
 method AddUser(
   UserProfile
 ): User = 2;

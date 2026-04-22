@@ -1,3 +1,5 @@
+// TODO: check what happens with the 'decode' thing, what it does with the BitArray when you take a subslice
+// TODO: check the UnrecognizedValues parameter to Serializer
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: review everything
 // TODO: look at generated comments
