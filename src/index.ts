@@ -1,6 +1,8 @@
 // TODO: in the generated code, ask AI if some things are not optimal
+// TODO: look at public symbols
 // TODO: review everything
 // TODO: look at generated comments
+// TODO: add comments to the library, in particular around Service
 
 import {
   type CodeGenerator,
@@ -628,6 +630,8 @@ class GleamSourceFileGenerator {
     }
     // Trailing underscore avoids conflict with user-defined fields named `unrecognized`.
     this.push(
+      "/// Stores unrecognized fields from newer schema versions for round-trip compatibility.\n",
+      "/// Set this to `struct_serializer_.None` when creating values manually.\n",
       `unrecognized_: struct_serializer_.UnrecognizedFields(${typeName}),\n`,
     );
     this.push(")\n");
@@ -1093,6 +1097,13 @@ function commentify(text: string): string {
     .split("\n")
     .map((line) => (line.length > 0 ? `/// ${line}\n` : `///\n`))
     .join("");
+}
+
+function mergeCommentSections(...sections: readonly string[]): string {
+  return sections
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join("\n\n");
 }
 
 function docToCommentText(doc: Doc): string {
