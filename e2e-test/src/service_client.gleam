@@ -7,8 +7,8 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleam/uri
-import serializer.{Keep}
 import internal/method.{type Method}
+import serializer.{Keep}
 
 // =============================================================================
 // RpcError

@@ -1,7 +1,7 @@
 import gleam/option.{None, Some}
 import gleeunit/should
-import serializer
 import internal/serializers
+import serializer
 import timestamp
 import type_descriptor
 
@@ -305,7 +305,10 @@ pub fn int64_from_json_integer_test() {
 }
 
 pub fn int64_from_json_quoted_large_test() {
-  serializer.from_json_code(serializers.int64_serializer(), "\"9007199254740992\"")
+  serializer.from_json_code(
+    serializers.int64_serializer(),
+    "\"9007199254740992\"",
+  )
   |> should.be_ok
   |> should.equal(9_007_199_254_740_992)
 }
@@ -396,7 +399,10 @@ pub fn hash64_from_json_negative_number_is_zero_test() {
 }
 
 pub fn hash64_from_json_quoted_large_test() {
-  serializer.from_json_code(serializers.hash64_serializer(), "\"9007199254740992\"")
+  serializer.from_json_code(
+    serializers.hash64_serializer(),
+    "\"9007199254740992\"",
+  )
   |> should.be_ok
   |> should.equal(9_007_199_254_740_992)
 }
@@ -1179,7 +1185,10 @@ pub fn timestamp_from_json_object_test() {
 }
 
 pub fn timestamp_from_json_quoted_millis_test() {
-  serializer.from_json_code(serializers.timestamp_serializer(), "\"1234567890000\"")
+  serializer.from_json_code(
+    serializers.timestamp_serializer(),
+    "\"1234567890000\"",
+  )
   |> should.be_ok
   |> to_unix_milli
   |> should.equal(1_234_567_890_000)

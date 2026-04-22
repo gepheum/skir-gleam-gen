@@ -5,10 +5,10 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
-import serializer as serializer_
 import internal/serializers
-import type_descriptor
+import serializer as serializer_
 import skirout/gepheum/skir_golden_tests/goldens
+import type_descriptor
 
 // =============================================================================
 // EvaluatedValue — type-erased bundle of a deserialised value and its serializer
@@ -32,9 +32,7 @@ fn make_ev(value: a, ser: serializer_.Serializer(a)) -> EvaluatedValue {
     to_dense_json: fn() { serializer_.to_dense_json_code(ser, value) },
     to_readable_json: fn() { serializer_.to_readable_json_code(ser, value) },
     type_descriptor_json: fn() {
-      type_descriptor.type_descriptor_to_json(serializer_.type_descriptor(
-        ser,
-      ))
+      type_descriptor.type_descriptor_to_json(serializer_.type_descriptor(ser))
     },
     from_json_keep: fn(json) {
       case
