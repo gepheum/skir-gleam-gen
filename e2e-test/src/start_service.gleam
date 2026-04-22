@@ -104,7 +104,7 @@ fn handle_request(
   // For GET requests (or any request with an empty body), fall back to the
   // query string so that e.g. GET /?list or GET /?GetUser:{...} works.
   let input = case body_str {
-    "" -> option.unwrap(req.query, "")
+    "" -> decoded_query_input(req)
     _ -> body_str
   }
 
@@ -114,6 +114,14 @@ fn handle_request(
   response.new(raw.status_code)
   |> response.set_header("content-type", raw.content_type)
   |> response.set_body(mist.Bytes(bytes_tree.from_string(raw.data)))
+}
+
+fn decoded_query_input(req: request.Request(mist.Connection)) -> String {
+  case request.get_query(req) {
+    Ok([#(key, "")]) -> key
+    Ok([#("input", value)]) -> value
+    _ -> option.unwrap(req.query, "")
+  }
 }
 
 // ---------------------------------------------------------------------------
