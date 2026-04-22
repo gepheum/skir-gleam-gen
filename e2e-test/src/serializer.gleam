@@ -79,11 +79,6 @@ pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
   Serializer(internal_adapter: adapter)
 }
 
-/// Returns `True` if `value` is the default value for the type.
-pub fn is_default(serializer: Serializer(a), value: a) -> Bool {
-  serializer.internal_adapter.is_default(value)
-}
-
 // =============================================================================
 // Core serialization API
 // =============================================================================
