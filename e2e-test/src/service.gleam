@@ -39,7 +39,7 @@ pub type RawResponse {
 // =============================================================================
 
 type InvokeFn(meta) =
-  fn(dynamic.Dynamic, Bool, Bool, meta) -> Result(String, ServiceError)
+  fn(dynamic.Dynamic, Bool, Bool, meta) -> #(Result(String, ServiceError), meta)
 
 type ErasedMethod(meta) {
   ErasedMethod(
@@ -54,7 +54,7 @@ type ErasedMethod(meta) {
 
 fn make_erased_method(
   method: Method(req, resp),
-  handler: fn(req, meta) -> Result(resp, ServiceError),
+  handler: fn(req, meta) -> #(Result(resp, ServiceError), meta),
 ) -> ErasedMethod(meta) {
   let request_td_json =
     method.request_serializer
@@ -79,25 +79,30 @@ fn make_erased_method(
         ),
       )
     {
-      Error(errors) ->
+      Error(errors) -> #(
         Error(ServiceError(
           status_code: 400,
           message: "bad request: " <> json_utils.decode_errors_to_string(errors),
-        ))
+        )),
+        meta,
+      )
       Ok(req) ->
         case handler(req, meta) {
-          Error(e) -> Error(e)
-          Ok(resp) -> {
+          #(Error(e), new_meta) -> #(Error(e), new_meta)
+          #(Ok(response_value), new_meta) -> {
             let json_str = case readable {
               True ->
                 serializer.to_readable_json_code(
                   method.response_serializer,
-                  resp,
+                  response_value,
                 )
               False ->
-                serializer.to_dense_json_code(method.response_serializer, resp)
+                serializer.to_dense_json_code(
+                  method.response_serializer,
+                  response_value,
+                )
             }
-            Ok(json_str)
+            #(Ok(json_str), new_meta)
           }
         }
     }
@@ -155,7 +160,7 @@ pub fn builder() -> ServiceBuilder(meta) {
 pub fn add_method(
   builder: ServiceBuilder(meta),
   method: Method(req, resp),
-  handler: fn(req, meta) -> Result(resp, ServiceError),
+  handler: fn(req, meta) -> #(Result(resp, ServiceError), meta),
 ) -> ServiceBuilder(meta) {
   ServiceBuilder(
     ..builder,
@@ -218,11 +223,11 @@ pub fn handle_request(
   service: Service(meta),
   body: String,
   meta: meta,
-) -> RawResponse {
+) -> #(RawResponse, meta) {
   let trimmed = string.trim(body)
   case trimmed {
-    "" | "studio" -> serve_studio(service)
-    "list" -> serve_list(service)
+    "" | "studio" -> #(serve_studio(service), meta)
+    "list" -> #(serve_list(service), meta)
     _ -> {
       case string.first(trimmed) {
         Ok("{") -> handle_json_request(service, trimmed, meta)
@@ -240,18 +245,22 @@ fn handle_json_request(
   service: Service(meta),
   body: String,
   meta: meta,
-) -> RawResponse {
+) -> #(RawResponse, meta) {
   case parse_json_format(body) {
-    Error(msg) ->
-      RawResponse(status_code: 400, content_type: "text/plain", data: msg)
+    Error(msg) -> #(
+      RawResponse(status_code: 400, content_type: "text/plain", data: msg),
+      meta,
+    )
     Ok(#(method_id, request_dynamic)) ->
       case lookup_method(service, method_id) {
-        Error(_) ->
+        Error(_) -> #(
           RawResponse(
             status_code: 404,
             content_type: "text/plain",
             data: "method not found",
-          )
+          ),
+          meta,
+        )
         Ok(entry) ->
           invoke_entry(
             service,
@@ -268,18 +277,22 @@ fn handle_colon_request(
   service: Service(meta),
   body: String,
   meta: meta,
-) -> RawResponse {
+) -> #(RawResponse, meta) {
   case parse_colon_format(body) {
-    Error(msg) ->
-      RawResponse(status_code: 400, content_type: "text/plain", data: msg)
+    Error(msg) -> #(
+      RawResponse(status_code: 400, content_type: "text/plain", data: msg),
+      meta,
+    )
     Ok(#(method_id, readable, request_dynamic)) ->
       case lookup_method(service, method_id) {
-        Error(_) ->
+        Error(_) -> #(
           RawResponse(
             status_code: 404,
             content_type: "text/plain",
             data: "method not found",
-          )
+          ),
+          meta,
+        )
         Ok(entry) ->
           invoke_entry(
             service,
@@ -308,10 +321,10 @@ fn invoke_entry(
   request_dynamic: dynamic.Dynamic,
   readable readable: Bool,
   meta meta: meta,
-) -> RawResponse {
-  case
+) -> #(RawResponse, meta) {
+  let #(result, new_meta) =
     entry.invoke(request_dynamic, service.keep_unrecognized, readable, meta)
-  {
+  let raw = case result {
     Ok(response_json) ->
       RawResponse(
         status_code: 200,
@@ -321,6 +334,7 @@ fn invoke_entry(
     Error(ServiceError(status_code: code, message: msg)) ->
       RawResponse(status_code: code, content_type: "text/plain", data: msg)
   }
+  #(raw, new_meta)
 }
 
 // =============================================================================
