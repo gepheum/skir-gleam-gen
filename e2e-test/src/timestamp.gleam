@@ -7,7 +7,7 @@ pub type Timestamp {
 }
 
 /// The default Timestamp: the Unix epoch (1970-01-01T00:00:00Z).
-pub const timestamp_default = Timestamp(unix_millis: 0)
+pub const unix_epoch = Timestamp(unix_millis: 0)
 
 /// Converts a Skir Timestamp to a Gleam Timestamp.
 pub fn to_gleam_timestamp(t: Timestamp) -> gleam_timestamp.Timestamp {
