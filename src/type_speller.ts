@@ -1,4 +1,9 @@
-import type { RecordKey, RecordLocation, ResolvedType } from "skir-internal";
+import type {
+  Field,
+  RecordKey,
+  RecordLocation,
+  ResolvedType,
+} from "skir-internal";
 
 /**
  * Transforms a type found in a `.skir` file into Gleam type strings and expressions.
@@ -111,6 +116,54 @@ export class TypeSpeller {
       case "record":
         return this.serializerExprFor(type.key);
     }
+  }
+
+  /**
+   * Returns the Gleam field type, wrapping hard-recursive fields in Recursive(...).
+   */
+  getFieldGleamType(field: Field<false>): string {
+    const type = this.getRequiredFieldType(field);
+    if (field.isRecursive !== "hard") {
+      return this.getGleamType(type);
+    }
+    this.neededModules.add("internal/recursive");
+    return `recursive_.Recursive(${this.getGleamType(type)})`;
+  }
+
+  /**
+   * Returns the Gleam field serializer expression, wrapping hard-recursive
+   * fields with recursive_serializer(...).
+   */
+  getFieldSerializerExpression(field: Field<false>): string {
+    const type = this.getRequiredFieldType(field);
+    if (field.isRecursive !== "hard") {
+      return this.getSerializerExpression(type);
+    }
+    this.neededModules.add("serializers");
+    return (
+      "serializers_.recursive_serializer(\n" +
+      this.getSerializerExpression(type) +
+      ",\n)"
+    );
+  }
+
+  /**
+   * Returns the Gleam field default expression.
+   */
+  getFieldDefaultExpression(field: Field<false>): string {
+    const type = this.getRequiredFieldType(field);
+    if (field.isRecursive !== "hard") {
+      return this.getDefaultExpression(type);
+    }
+    this.neededModules.add("internal/recursive");
+    return "recursive_.Default";
+  }
+
+  private getRequiredFieldType(field: Field<false>): ResolvedType {
+    if (!field.type) {
+      throw new Error("Expected field.type to be defined");
+    }
+    return field.type;
   }
 
   /**

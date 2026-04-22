@@ -84,7 +84,7 @@ pub fn field_spec_to_field_adapter(
   name name: String,
   number number: Int,
   doc doc: String,
-  default default: f,
+  default _default: f,
   type_sig type_sig: type_descriptor.TypeSignature,
   get get: fn(s) -> f,
   set set: fn(s, f) -> s,
@@ -117,7 +117,7 @@ pub fn field_spec_to_field_adapter(
         name: name,
         number: number,
         doc: doc,
-        is_default: fn(acc) { get(acc) == default },
+        is_default: fn(acc) { f().internal_adapter.is_default(get(acc)) },
         to_json: fn(acc, readable) {
           f().internal_adapter.to_json(get(acc), readable)
         },

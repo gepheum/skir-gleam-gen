@@ -11,6 +11,7 @@ import gleam/string
 import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp as gleam_timestamp
+import internal/recursive
 import serializer.{
   type Serializer, type TypeAdapter, type UnrecognizedValues, make_serializer,
   make_type_adapter,
@@ -1013,6 +1014,56 @@ pub fn optional_serializer(
   item_serializer: Serializer(a),
 ) -> Serializer(Option(a)) {
   make_serializer(optional_adapter(item_serializer))
+}
+
+fn recursive_adapter(
+  item_serializer: Serializer(a),
+) -> TypeAdapter(recursive.Recursive(a)) {
+  let item = item_serializer.internal_adapter
+  make_type_adapter(
+    is_default: fn(v) {
+      case v {
+        recursive.Default -> True
+        recursive.Some(x) -> item.is_default(x)
+      }
+    },
+    to_json: fn(v, readable) {
+      case v {
+        recursive.Default ->
+          case readable {
+            True -> json.object([])
+            False -> json.preprocessed_array([])
+          }
+        recursive.Some(x) -> item.to_json(x, readable)
+      }
+    },
+    decode_json: fn(keep) {
+      item.decode_json(keep) |> decode.map(recursive.Some)
+    },
+    encode: fn(v, acc) {
+      case v {
+        // In struct slot encoding, preceding default values still need an on-wire
+        // placeholder when a later slot is active. For recursive struct fields,
+        // that placeholder is the default empty-struct wire byte.
+        recursive.Default -> bytes_tree.append(acc, <<246>>)
+        recursive.Some(x) -> item.encode(x, acc)
+      }
+    },
+    decode: fn(bits, keep) {
+      case item.decode(bits, keep) {
+        Ok(#(x, remaining)) -> Ok(#(recursive.Some(x), remaining))
+        Error(e) -> Error(e)
+      }
+    },
+    type_descriptor: fn() { item.type_descriptor() },
+  )
+}
+
+/// Returns a serializer for Recursive(a) values.
+pub fn recursive_serializer(
+  item_serializer: Serializer(a),
+) -> Serializer(recursive.Recursive(a)) {
+  make_serializer(recursive_adapter(item_serializer))
 }
 
 fn list_adapter(

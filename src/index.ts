@@ -1,6 +1,4 @@
 // TODO: rename timestamp_default to unix_epoch
-// TODO: serializers should actually not be in 'internal'
-// TODO: the recursive fields are completely bugged, see the constructor. we need a special serializer.
 // TODO: we can probably remove the `pub fn decode_json_field()`
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: review everything
@@ -504,9 +502,9 @@ class GleamSourceFileGenerator {
         this.neededModules.add("internal/recursive");
         if (entry) {
           const innerExpr = this.valueToGleamExpr(entry.value, field.type);
-          args.push(`${fieldName}_rec: recursive_.Some(\n${innerExpr}\n)`);
+          args.push(`${fieldName}: recursive_.Some(\n${innerExpr}\n)`);
         } else {
-          args.push(`${fieldName}_rec: recursive_.Default`);
+          args.push(`${fieldName}: recursive_.Default`);
         }
       } else {
         if (entry) {
@@ -619,28 +617,15 @@ class GleamSourceFileGenerator {
     // Doc comment.
     this.push(commentify(docToCommentText(struct.record.doc)));
 
-    // Determine which fields are hard-recursive (need Recursive wrapping).
-    const hardRecFields = fields.filter((f) => f.isRecursive === "hard");
-    if (hardRecFields.length > 0) {
-      this.neededModules.add("gleam/option");
-      this.neededModules.add("internal/recursive");
-    }
-
     // Type definition.
-    // Hard-recursive fields are stored internally as recursive_.Recursive(T) under the
-    // label `fieldname_rec` to avoid infinite-size types.
+    // Hard-recursive fields are stored as recursive_.Recursive(T).
     this.push(`pub type ${typeName} {\n`);
     this.push(`${typeName}(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       this.push(commentify(docToCommentText(field.doc)));
-      if (field.isRecursive === "hard") {
-        const inner = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}_rec: recursive_.Recursive(${inner}),\n`);
-      } else {
-        const gleamType = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}: ${gleamType},\n`);
-      }
+      const gleamType = typeSpeller.getFieldGleamType(field);
+      this.push(`${fieldName}: ${gleamType},\n`);
     }
     // Trailing underscore avoids conflict with user-defined fields named `unrecognized`.
     this.push(
@@ -649,24 +634,6 @@ class GleamSourceFileGenerator {
     this.push(")\n");
     this.push("}\n\n");
 
-    // Getters for hard-recursive fields.
-    // These expose a plain T (not Recursive(T)) to callers, returning the default
-    // value when the stored Recursive is Default.
-    for (const field of hardRecFields) {
-      const fieldName = toFieldName(field.name.text);
-      const innerType = typeSpeller.getGleamType(field.type!);
-      const defExpr = typeSpeller.getDefaultExpression(field.type!);
-      this.push(commentify(docToCommentText(field.doc)));
-      this.push(
-        `pub fn ${fnPrefix}${fieldName}(s: ${typeName}) -> ${innerType} {\n`,
-      );
-      this.push(`case s.${fieldName}_rec {\n`);
-      this.push(`recursive_.Some(v) -> v\n`);
-      this.push(`recursive_.Default -> ${defExpr}\n`);
-      this.push("}\n");
-      this.push("}\n\n");
-    }
-
     // Default const.
     this.push(
       `/// The default \`${typeName}\` with all fields set to their default values.\n`,
@@ -674,12 +641,8 @@ class GleamSourceFileGenerator {
     this.push(`pub const ${fnPrefix}default = ${typeName}(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
-      if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: recursive_.Default,\n`);
-      } else {
-        const defExpr = typeSpeller.getDefaultExpression(field.type!);
-        this.push(`${fieldName}: ${defExpr},\n`);
-      }
+      const defExpr = typeSpeller.getFieldDefaultExpression(field);
+      this.push(`${fieldName}: ${defExpr},\n`);
     }
     this.push(`unrecognized_: struct_serializer_.None,\n`);
     this.push(")\n\n");
@@ -691,23 +654,14 @@ class GleamSourceFileGenerator {
     this.push(`pub fn ${fnPrefix}new(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
-      if (field.isRecursive === "hard") {
-        const innerType = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}: ${innerType},\n`);
-      } else {
-        const gleamType = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}: ${gleamType},\n`);
-      }
+      const gleamType = typeSpeller.getFieldGleamType(field);
+      this.push(`${fieldName}: ${gleamType},\n`);
     }
     this.push(`) -> ${typeName} {\n`);
     this.push(`${typeName}(\n`);
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
-      if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: recursive_.Some(${fieldName}),\n`);
-      } else {
-        this.push(`${fieldName}: ${fieldName},\n`);
-      }
+      this.push(`${fieldName}: ${fieldName},\n`);
     }
     this.push(`unrecognized_: struct_serializer_.None,\n`);
     this.push(`)\n`);
@@ -728,7 +682,7 @@ class GleamSourceFileGenerator {
     for (const field of fieldsByNumber) {
       if (field.isRecursive === false) {
         const varName = toFieldName(field.name.text);
-        const serExpr = typeSpeller.getSerializerExpression(field.type!);
+        const serExpr = typeSpeller.getFieldSerializerExpression(field);
         this.push(`let ${varName}_serializer = ${serExpr}\n`);
       }
     }
@@ -742,31 +696,23 @@ class GleamSourceFileGenerator {
     this.push(`ordered_fields: [\n`);
     for (const field of fieldsByNumber) {
       const fieldName = toFieldName(field.name.text);
-      const isHardRec = field.isRecursive === "hard";
       const isRecursive = field.isRecursive !== false;
-      const fieldType = typeSpeller.getGleamType(field.type!);
+      const fieldType = typeSpeller.getFieldGleamType(field);
       this.push(`struct_serializer_.field_spec_to_field_adapter(\n`);
       this.push(`name: ${JSON.stringify(field.name.text)},\n`);
       this.push(`number: ${field.number},\n`);
       this.push(`doc: ${JSON.stringify(docToCommentText(field.doc))},\n`);
-      this.push(`default: ${typeSpeller.getDefaultExpression(field.type!)},\n`);
+      this.push(`default: ${typeSpeller.getFieldDefaultExpression(field)},\n`);
       this.push(
         `type_sig: ${typeSpeller.getTypeSignatureExpression(field.type!)},\n`,
       );
-      if (isHardRec) {
-        this.push(`get: fn(s: ${typeName}) { ${fnPrefix}${fieldName}(s) },\n`);
-        this.push(
-          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: recursive_.Some(v)) },\n`,
-        );
-      } else {
-        this.push(`get: fn(s: ${typeName}) { s.${fieldName} },\n`);
-        this.push(
-          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}: v) },\n`,
-        );
-      }
+      this.push(`get: fn(s: ${typeName}) { s.${fieldName} },\n`);
+      this.push(
+        `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}: v) },\n`,
+      );
       if (isRecursive) {
         this.push(`serializer: struct_serializer_.Lazy(fn() {\n`);
-        this.push(`${typeSpeller.getSerializerExpression(field.type!)}\n`);
+        this.push(`${typeSpeller.getFieldSerializerExpression(field)}\n`);
         this.push(`}),\n`);
       } else {
         this.push(
@@ -802,29 +748,18 @@ class GleamSourceFileGenerator {
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
       if (field) {
-        const isHardRec = field.isRecursive === "hard";
         const varName = toFieldName(field.name.text);
-        const defExpr = typeSpeller.getDefaultExpression(field.type!);
+        const defExpr = typeSpeller.getFieldDefaultExpression(field);
         const serExpr =
           field.isRecursive === false
             ? `${varName}_serializer`
-            : typeSpeller.getSerializerExpression(field.type!);
+            : typeSpeller.getFieldSerializerExpression(field);
         this.push(
           `let #(slot_${slot}_dyn, arr) = struct_serializer_.take_slot(arr)\n`,
         );
-        if (isHardRec) {
-          this.push(
-            `use ${varName}_rec_opt_ <- result_.try(struct_serializer_.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
-          );
-          this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
-          this.push(`option_.None -> recursive_.Default\n`);
-          this.push(`option_.Some(v_) -> recursive_.Some(v_)\n`);
-          this.push(`}\n`);
-        } else {
-          this.push(
-            `use ${varName} <- result_.try(struct_serializer_.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
-          );
-        }
+        this.push(
+          `use ${varName} <- result_.try(struct_serializer_.decode_json_field(slot_${slot}_dyn, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+        );
       } else {
         this.push(`let #(_, arr) = struct_serializer_.take_slot(arr)\n`);
       }
@@ -833,7 +768,7 @@ class GleamSourceFileGenerator {
       `let unrecognized_ = struct_serializer_.make_unrecognized_fields_json(arr, arr_len, keep)\n`,
     );
     const structArgsDense =
-      fieldArgsWithRecSuffix(fieldsByNumber) +
+      fieldArgLabels(fieldsByNumber) +
       (fieldsByNumber.length > 0 ? ", " : "") +
       "unrecognized_:";
     this.push(`Ok(${typeName}(${structArgsDense}))\n`);
@@ -846,26 +781,15 @@ class GleamSourceFileGenerator {
     for (let slot = 0; slot < numSlots; slot++) {
       const field = fieldsBySlot.get(slot);
       if (field) {
-        const isHardRec = field.isRecursive === "hard";
         const varName = toFieldName(field.name.text);
-        const defExpr = typeSpeller.getDefaultExpression(field.type!);
+        const defExpr = typeSpeller.getFieldDefaultExpression(field);
         const serExpr =
           field.isRecursive === false
             ? `${varName}_serializer`
-            : typeSpeller.getSerializerExpression(field.type!);
-        if (isHardRec) {
-          this.push(
-            `use #(${varName}_rec_opt_, bits) <- result_.try(struct_serializer_.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
-          );
-          this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
-          this.push(`option_.None -> recursive_.Default\n`);
-          this.push(`option_.Some(v_) -> recursive_.Some(v_)\n`);
-          this.push(`}\n`);
-        } else {
-          this.push(
-            `use #(${varName}, bits) <- result_.try(struct_serializer_.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
-          );
-        }
+            : typeSpeller.getFieldSerializerExpression(field);
+        this.push(
+          `use #(${varName}, bits) <- result_.try(struct_serializer_.decode_binary_field(bits, slots_to_fill > ${slot}, ${defExpr}, keep, serializer: ${serExpr}))\n`,
+        );
       } else {
         this.push(
           `use bits <- result_.try(struct_serializer_.skip_binary_slot(bits, slots_to_fill > ${slot}))\n`,
@@ -873,7 +797,7 @@ class GleamSourceFileGenerator {
       }
     }
     const structArgsBin =
-      fieldArgsWithRecSuffix(fieldsByNumber) +
+      fieldArgLabels(fieldsByNumber) +
       (fieldsByNumber.length > 0 ? ", " : "") +
       "unrecognized_: struct_serializer_.None";
     this.push(`Ok(#(${typeName}(${structArgsBin}), bits))\n`);
@@ -1142,17 +1066,16 @@ class GleamSourceFileGenerator {
 export const GENERATOR = new GleamCodeGenerator();
 
 /**
- * Maps a list of fields to Gleam record constructor argument labels,
- * appending `_rec` to hard-recursive fields to match the stored label.
+ * Maps a list of fields to Gleam record constructor argument labels.
  * Returns a comma-joined string suitable for use in a constructor call.
  */
-function fieldArgsWithRecSuffix(
+function fieldArgLabels(
   fields: ReadonlyArray<{ name: { text: string }; isRecursive: unknown }>,
 ): string {
   return fields
     .map((f) => {
       const varName = toFieldName(f.name.text);
-      return f.isRecursive === "hard" ? `${varName}_rec:` : `${varName}:`;
+      return `${varName}:`;
     })
     .join(", ");
 }
