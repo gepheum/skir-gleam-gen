@@ -1,4 +1,3 @@
-// TODO: we can probably remove the `pub fn decode_json_field()`
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: review everything
 // TODO: look at generated comments

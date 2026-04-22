@@ -1,12 +1,12 @@
 import gleam/dict.{type Dict}
 import gleam/dynamic
 import gleam/dynamic/decode
-import gleam/float
 import gleam/int
 import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
+import internal/json_utils
 import internal/method.{type Method}
 import serializer.{type UnrecognizedValues, Drop, Keep}
 import type_descriptor
@@ -39,7 +39,7 @@ pub type RawResponse {
 // =============================================================================
 
 type InvokeFn(meta) =
-  fn(String, Bool, Bool, meta) -> Result(String, ServiceError)
+  fn(dynamic.Dynamic, Bool, Bool, meta) -> Result(String, ServiceError)
 
 type ErasedMethod(meta) {
   ErasedMethod(
@@ -65,20 +65,25 @@ fn make_erased_method(
     |> serializer.type_descriptor()
     |> type_descriptor.type_descriptor_to_json()
 
-  let invoke = fn(request_json, keep_bool, readable, meta) {
+  let invoke = fn(request_dynamic, keep_bool, readable, meta) {
     let keep: UnrecognizedValues = case keep_bool {
       True -> Keep
       False -> Drop
     }
     case
-      serializer.from_json_code_with_options(
-        method.request_serializer,
-        request_json,
-        keep_unrecognized_values: keep,
+      decode.run(
+        request_dynamic,
+        serializer.json_decoder_with_options(
+          method.request_serializer,
+          keep_unrecognized_values: keep,
+        ),
       )
     {
-      Error(e) ->
-        Error(ServiceError(status_code: 400, message: "bad request: " <> e))
+      Error(errors) ->
+        Error(ServiceError(
+          status_code: 400,
+          message: "bad request: " <> json_utils.decode_errors_to_string(errors),
+        ))
       Ok(req) ->
         case handler(req, meta) {
           Error(e) -> Error(e)
@@ -239,7 +244,7 @@ fn handle_json_request(
   case parse_json_format(body) {
     Error(msg) ->
       RawResponse(status_code: 400, content_type: "text/plain", data: msg)
-    Ok(#(method_id, request_json)) ->
+    Ok(#(method_id, request_dynamic)) ->
       case lookup_method(service, method_id) {
         Error(_) ->
           RawResponse(
@@ -248,7 +253,13 @@ fn handle_json_request(
             data: "method not found",
           )
         Ok(entry) ->
-          invoke_entry(service, entry, request_json, readable: True, meta: meta)
+          invoke_entry(
+            service,
+            entry,
+            request_dynamic,
+            readable: True,
+            meta: meta,
+          )
       }
   }
 }
@@ -261,7 +272,7 @@ fn handle_colon_request(
   case parse_colon_format(body) {
     Error(msg) ->
       RawResponse(status_code: 400, content_type: "text/plain", data: msg)
-    Ok(#(method_id, readable, request_json)) ->
+    Ok(#(method_id, readable, request_dynamic)) ->
       case lookup_method(service, method_id) {
         Error(_) ->
           RawResponse(
@@ -273,7 +284,7 @@ fn handle_colon_request(
           invoke_entry(
             service,
             entry,
-            request_json,
+            request_dynamic,
             readable: readable,
             meta: meta,
           )
@@ -294,11 +305,13 @@ fn lookup_method(
 fn invoke_entry(
   service: Service(meta),
   entry: ErasedMethod(meta),
-  request_json: String,
+  request_dynamic: dynamic.Dynamic,
   readable readable: Bool,
   meta meta: meta,
 ) -> RawResponse {
-  case entry.invoke(request_json, service.keep_unrecognized, readable, meta) {
+  case
+    entry.invoke(request_dynamic, service.keep_unrecognized, readable, meta)
+  {
     Ok(response_json) ->
       RawResponse(
         status_code: 200,
@@ -368,7 +381,9 @@ type MethodId {
   MethodIdNumber(Int)
 }
 
-fn parse_json_format(body: String) -> Result(#(MethodId, String), String) {
+fn parse_json_format(
+  body: String,
+) -> Result(#(MethodId, dynamic.Dynamic), String) {
   let decoder = {
     use method_dyn <- decode.field("method", decode.dynamic)
     use request_dyn <- decode.field("request", decode.dynamic)
@@ -389,11 +404,12 @@ fn parse_json_format(body: String) -> Result(#(MethodId, String), String) {
   }
   use mid <- result.try(method_id_result)
 
-  let request_json = dynamic_to_json_string(request_dyn)
-  Ok(#(mid, request_json))
+  Ok(#(mid, request_dyn))
 }
 
-fn parse_colon_format(body: String) -> Result(#(MethodId, Bool, String), String) {
+fn parse_colon_format(
+  body: String,
+) -> Result(#(MethodId, Bool, dynamic.Dynamic), String) {
   case split_colon4(body) {
     Error(_) ->
       Error("invalid request format; expected name:number:format:requestJson")
@@ -403,7 +419,10 @@ fn parse_colon_format(body: String) -> Result(#(MethodId, Bool, String), String)
         _ -> MethodIdName(name)
       }
       let readable = format == "readable"
-      Ok(#(method_id, readable, request_json))
+      case json.parse(from: request_json, using: decode.dynamic) {
+        Ok(request_dynamic) -> Ok(#(method_id, readable, request_dynamic))
+        Error(_) -> Error("invalid request JSON")
+      }
     }
   }
 }
@@ -418,37 +437,6 @@ fn split_colon4(s: String) -> Result(#(String, String, String, String), Nil) {
           case string.split_once(rest2, ":") {
             Error(_) -> Error(Nil)
             Ok(#(c, d)) -> Ok(#(a, b, c, d))
-          }
-      }
-  }
-}
-
-// =============================================================================
-// Private: Dynamic -> JSON string
-// =============================================================================
-
-fn dynamic_to_json_string(d: dynamic.Dynamic) -> String {
-  case decode.run(d, decode.int) {
-    Ok(n) -> int.to_string(n)
-    _ ->
-      case decode.run(d, decode.bool) {
-        Ok(True) -> "true"
-        Ok(False) -> "false"
-        _ ->
-          case decode.run(d, decode.float) {
-            Ok(f) -> float.to_string(f)
-            _ ->
-              case decode.run(d, decode.string) {
-                Ok(s) -> json.to_string(json.string(s))
-                _ ->
-                  case decode.run(d, decode.list(decode.dynamic)) {
-                    Ok(lst) ->
-                      "["
-                      <> string.join(list.map(lst, dynamic_to_json_string), ",")
-                      <> "]"
-                    _ -> "null"
-                  }
-              }
           }
       }
   }

@@ -5,7 +5,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/result
-import gleam/string
+import gleam/string_tree
 import internal/json_utils
 import type_descriptor.{type TypeDescriptor}
 
@@ -32,6 +32,7 @@ pub type TypeAdapter(a) {
   TypeAdapter(
     is_default: fn(a) -> Bool,
     to_json: fn(a, Bool) -> json.Json,
+    to_readable_json_code: fn(a, String) -> string_tree.StringTree,
     decode_json: fn(UnrecognizedValues) -> decode.Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,
     decode: fn(BitArray, UnrecognizedValues) -> Result(#(a, BitArray), String),
@@ -44,6 +45,8 @@ pub type TypeAdapter(a) {
 pub fn make_type_adapter(
   is_default is_default: fn(a) -> Bool,
   to_json to_json: fn(a, Bool) -> json.Json,
+  to_readable_json_code to_readable_json_code: fn(a, String) ->
+    string_tree.StringTree,
   decode_json decode_json: fn(UnrecognizedValues) -> decode.Decoder(a),
   encode encode: fn(a, BytesTree) -> BytesTree,
   decode decode: fn(BitArray, UnrecognizedValues) ->
@@ -53,6 +56,7 @@ pub fn make_type_adapter(
   TypeAdapter(
     is_default:,
     to_json:,
+    to_readable_json_code:,
     decode_json:,
     encode:,
     decode:,
@@ -105,9 +109,8 @@ pub fn to_readable_json(serializer: Serializer(a), value: a) -> json.Json {
 /// Serializes a value to readable (field-name-based, indented) JSON code.
 /// Uses 2-space indentation.
 pub fn to_readable_json_code(serializer: Serializer(a), value: a) -> String {
-  serializer.internal_adapter.to_json(value, True)
-  |> json.to_string()
-  |> pretty_print_json()
+  serializer.internal_adapter.to_readable_json_code(value, "\n")
+  |> string_tree.to_string
 }
 
 /// Deserializes a value from a JSON string. Accepts both dense and readable
@@ -195,6 +198,59 @@ pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
   serializer.internal_adapter.type_descriptor()
 }
 
+/// Builds readable JSON array code from already-rendered readable item trees.
+pub fn readable_json_array(
+  items: List(string_tree.StringTree),
+  eol_indent: String,
+) -> string_tree.StringTree {
+  case items {
+    [] -> string_tree.from_string("[]")
+    _ -> {
+      let child_indent = eol_indent <> "  "
+      let indented_items =
+        list.map(items, fn(item) {
+          string_tree.concat([
+            string_tree.from_string(child_indent),
+            item,
+          ])
+        })
+      string_tree.concat([
+        string_tree.from_string("["),
+        string_tree.join(indented_items, ","),
+        string_tree.from_string(eol_indent <> "]"),
+      ])
+    }
+  }
+}
+
+/// Builds readable JSON object code from key/value readable trees.
+pub fn readable_json_object(
+  fields: List(#(String, string_tree.StringTree)),
+  eol_indent: String,
+) -> string_tree.StringTree {
+  case fields {
+    [] -> string_tree.from_string("{}")
+    _ -> {
+      let child_indent = eol_indent <> "  "
+      let lines =
+        list.map(fields, fn(field) {
+          let #(name, value_tree) = field
+          string_tree.concat([
+            string_tree.from_string(child_indent),
+            json.to_string_tree(json.string(name)),
+            string_tree.from_string(": "),
+            value_tree,
+          ])
+        })
+      string_tree.concat([
+        string_tree.from_string("{"),
+        string_tree.join(lines, ","),
+        string_tree.from_string(eol_indent <> "}"),
+      ])
+    }
+  }
+}
+
 // =============================================================================
 // Internal helpers
 // =============================================================================
@@ -215,65 +271,4 @@ fn parse_json_code_to_dynamic(
     Ok(d) -> Ok(d)
     Error(e) -> Error(json_decode_error_to_string(e))
   }
-}
-
-fn pretty_print_json(code: String) -> String {
-  let chars = string.to_graphemes(code)
-  let #(parts_reversed, _, _, _, _) =
-    list.fold(chars, #([], 0, False, False, False), fn(state, ch) {
-      let #(acc0, indent, in_string, escaped, just_opened) = state
-      case in_string {
-        True -> {
-          let acc = [ch, ..acc0]
-          case escaped {
-            True -> #(acc, indent, True, False, just_opened)
-            False ->
-              case ch {
-                "\\" -> #(acc, indent, True, True, just_opened)
-                "\"" -> #(acc, indent, False, False, just_opened)
-                _ -> #(acc, indent, True, False, just_opened)
-              }
-          }
-        }
-        False -> {
-          let acc = case
-            just_opened
-            && ch != "}"
-            && ch != "]"
-            && ch != " "
-            && ch != "\n"
-            && ch != "\t"
-          {
-            True -> [string.repeat("  ", indent), "\n", ..acc0]
-            False -> acc0
-          }
-          case ch {
-            "{" | "[" -> #([ch, ..acc], indent + 1, False, False, True)
-            "}" | "]" ->
-              case just_opened {
-                True -> #([ch, ..acc], indent - 1, False, False, False)
-                False -> #(
-                  [ch, string.repeat("  ", indent - 1), "\n", ..acc],
-                  indent - 1,
-                  False,
-                  False,
-                  False,
-                )
-              }
-            "," -> #(
-              [string.repeat("  ", indent), "\n", ",", ..acc],
-              indent,
-              False,
-              False,
-              False,
-            )
-            ":" -> #([" ", ":", ..acc], indent, False, False, False)
-            "\"" -> #(["\"", ..acc], indent, True, False, False)
-            " " | "\n" | "\t" -> #(acc, indent, False, False, just_opened)
-            _ -> #([ch, ..acc], indent, False, False, False)
-          }
-        }
-      }
-    })
-  parts_reversed |> list.reverse |> string.concat
 }

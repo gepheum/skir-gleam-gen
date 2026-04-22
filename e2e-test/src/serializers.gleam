@@ -14,7 +14,7 @@ import gleam/time/timestamp as gleam_timestamp
 import internal/recursive
 import serializer.{
   type Serializer, type TypeAdapter, type UnrecognizedValues, make_serializer,
-  make_type_adapter,
+  make_type_adapter, readable_json_array, readable_json_object,
 }
 import timestamp as skir_timestamp
 import type_descriptor
@@ -35,6 +35,9 @@ fn bool_adapter() -> TypeAdapter(Bool) {
             False -> 0
           })
       }
+    },
+    to_readable_json_code: fn(v, _eol_indent) {
+      json.to_string_tree(json.bool(v))
     },
     decode_json: fn(_) {
       decode.one_of(decode.bool, [
@@ -179,6 +182,9 @@ fn int32_adapter() -> TypeAdapter(Int) {
   make_type_adapter(
     is_default: fn(v) { v == 0 },
     to_json: fn(v, _) { json.int(v) },
+    to_readable_json_code: fn(v, _eol_indent) {
+      json.to_string_tree(json.int(v))
+    },
     decode_json: fn(_) {
       decode.one_of(decode.int, [
         decode.float |> decode.map(float.truncate),
@@ -228,6 +234,12 @@ fn int64_adapter() -> TypeAdapter(Int) {
       case v >= -max_safe_int64_json && v <= max_safe_int64_json {
         True -> json.int(v)
         False -> json.string(int.to_string(v))
+      }
+    },
+    to_readable_json_code: fn(v, _eol_indent) {
+      case v >= -max_safe_int64_json && v <= max_safe_int64_json {
+        True -> json.to_string_tree(json.int(v))
+        False -> json.to_string_tree(json.string(int.to_string(v)))
       }
     },
     decode_json: fn(_) {
@@ -291,6 +303,12 @@ fn hash64_adapter() -> TypeAdapter(Int) {
       case v <= max_safe_hash64_json {
         True -> json.int(v)
         False -> json.string(int.to_string(v))
+      }
+    },
+    to_readable_json_code: fn(v, _eol_indent) {
+      case v <= max_safe_hash64_json {
+        True -> json.to_string_tree(json.int(v))
+        False -> json.to_string_tree(json.string(int.to_string(v)))
       }
     },
     decode_json: fn(_) {
@@ -393,6 +411,13 @@ fn float32_adapter() -> TypeAdapter(Float) {
         Error(_) -> json.float(v)
       }
     },
+    to_readable_json_code: fn(v, _eol_indent) {
+      let s = float_to_json_str(v)
+      case int.parse(s) {
+        Ok(n) -> json.to_string_tree(json.int(n))
+        Error(_) -> json.to_string_tree(json.float(v))
+      }
+    },
     decode_json: fn(_) { float_decode_json() },
     encode: fn(v, acc) {
       bytes_tree.append(acc, case v {
@@ -440,6 +465,13 @@ fn float64_adapter() -> TypeAdapter(Float) {
       case int.parse(s) {
         Ok(n) -> json.int(n)
         Error(_) -> json.float(v)
+      }
+    },
+    to_readable_json_code: fn(v, _eol_indent) {
+      let s = float_to_json_str(v)
+      case int.parse(s) {
+        Ok(n) -> json.to_string_tree(json.int(n))
+        Error(_) -> json.to_string_tree(json.float(v))
       }
     },
     decode_json: fn(_) { float_decode_json() },
@@ -729,6 +761,9 @@ fn string_adapter() -> TypeAdapter(String) {
   make_type_adapter(
     is_default: fn(v) { v == "" },
     to_json: fn(v, _) { json.string(v) },
+    to_readable_json_code: fn(v, _eol_indent) {
+      json.to_string_tree(json.string(v))
+    },
     decode_json: fn(_) {
       decode.one_of(decode.string, [
         decode.int |> decode.map(fn(_) { "" }),
@@ -802,6 +837,9 @@ fn bytes_adapter() -> TypeAdapter(BitArray) {
         True -> json.string("hex:" <> encode_hex(v))
         False -> json.string(encode_base64(v))
       }
+    },
+    to_readable_json_code: fn(v, _eol_indent) {
+      json.to_string_tree(json.string("hex:" <> encode_hex(v)))
     },
     decode_json: fn(_) {
       decode.one_of(
@@ -918,6 +956,21 @@ fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
         }
       }
     },
+    to_readable_json_code: fn(v: skir_timestamp.Timestamp, eol_indent) {
+      let ms = v.unix_millis
+      let iso =
+        gleam_timestamp.to_rfc3339(
+          skir_timestamp.to_gleam_timestamp(v),
+          calendar.utc_offset,
+        )
+      readable_json_object(
+        [
+          #("unix_millis", json.to_string_tree(json.int(ms))),
+          #("formatted", json.to_string_tree(json.string(iso))),
+        ],
+        eol_indent,
+      )
+    },
     decode_json: fn(_) {
       decode.one_of(
         decode.int
@@ -980,6 +1033,12 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
         Some(x) -> item.to_json(x, readable)
       }
     },
+    to_readable_json_code: fn(v, eol_indent) {
+      case v {
+        None -> json.to_string_tree(json.null())
+        Some(x) -> item.to_readable_json_code(x, eol_indent)
+      }
+    },
     decode_json: fn(keep) { decode.optional(item.decode_json(keep)) },
     encode: fn(v, acc) {
       case v {
@@ -1037,6 +1096,12 @@ fn recursive_adapter(
         recursive.Some(x) -> item.to_json(x, readable)
       }
     },
+    to_readable_json_code: fn(v, eol_indent) {
+      case v {
+        recursive.Default -> json.to_string_tree(json.object([]))
+        recursive.Some(x) -> item.to_readable_json_code(x, eol_indent)
+      }
+    },
     decode_json: fn(keep) {
       item.decode_json(keep) |> decode.map(recursive.Some)
     },
@@ -1075,6 +1140,15 @@ fn list_adapter(
     is_default: fn(v) { v == [] },
     to_json: fn(v, readable) {
       json.array(v, fn(item_val) { item.to_json(item_val, readable) })
+    },
+    to_readable_json_code: fn(v, eol_indent) {
+      let child_indent = eol_indent <> "  "
+      readable_json_array(
+        list.map(v, fn(item_val) {
+          item.to_readable_json_code(item_val, child_indent)
+        }),
+        eol_indent,
+      )
     },
     decode_json: fn(keep) {
       decode.one_of(decode.list(item.decode_json(keep)), [

@@ -10,6 +10,7 @@ import gleam/list
 import gleam/option
 import gleam/result
 import gleam/string
+import gleam/string_tree
 import internal/decode_utils
 import internal/json_utils
 import internal/unrecognized
@@ -72,6 +73,7 @@ pub type FieldAdapter(s) {
     doc: String,
     is_default: fn(s) -> Bool,
     to_json: fn(s, Bool) -> json.Json,
+    to_readable_json_code: fn(s, String) -> string_tree.StringTree,
     decode_json: fn(s, UnrecognizedValues) -> decode.Decoder(s),
     encode: fn(s, BytesTree) -> BytesTree,
     decode: fn(BitArray, s, UnrecognizedValues) ->
@@ -99,6 +101,9 @@ pub fn field_spec_to_field_adapter(
         doc: doc,
         is_default: fn(acc) { ta.is_default(get(acc)) },
         to_json: fn(acc, readable) { ta.to_json(get(acc), readable) },
+        to_readable_json_code: fn(acc, eol_indent) {
+          ta.to_readable_json_code(get(acc), eol_indent)
+        },
         decode_json: fn(acc, keep) {
           decode.map(ta.decode_json(keep), fn(f_val) { set(acc, f_val) })
         },
@@ -120,6 +125,9 @@ pub fn field_spec_to_field_adapter(
         is_default: fn(acc) { f().internal_adapter.is_default(get(acc)) },
         to_json: fn(acc, readable) {
           f().internal_adapter.to_json(get(acc), readable)
+        },
+        to_readable_json_code: fn(acc, eol_indent) {
+          f().internal_adapter.to_readable_json_code(get(acc), eol_indent)
         },
         decode_json: fn(acc, keep) {
           decode.map(f().internal_adapter.decode_json(keep), fn(f_val) {
@@ -216,6 +224,9 @@ pub fn new_serializer(
           s,
           readable,
         )
+      },
+      to_readable_json_code: fn(s, eol_indent) {
+        append_readable_json_tree(ordered_fields, s, eol_indent)
       },
       decode_json: fn(keep) {
         use d <- decode.then(decode.dynamic)
@@ -467,6 +478,22 @@ fn append_readable_json(fields: List(FieldAdapter(s)), s: s) -> json.Json {
       }
     })
   json.object(pairs)
+}
+
+fn append_readable_json_tree(
+  fields: List(FieldAdapter(s)),
+  s: s,
+  eol_indent: String,
+) -> string_tree.StringTree {
+  let child_indent = eol_indent <> "  "
+  let pairs =
+    list.filter_map(fields, fn(f) {
+      case f.is_default(s) {
+        True -> Error(Nil)
+        False -> Ok(#(f.name, f.to_readable_json_code(s, child_indent)))
+      }
+    })
+  serializer.readable_json_object(pairs, eol_indent)
 }
 
 fn append_json_slots(

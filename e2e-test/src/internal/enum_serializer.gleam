@@ -10,6 +10,7 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
+import gleam/string_tree
 import internal/decode_utils
 import internal/json_utils
 import internal/unrecognized
@@ -73,6 +74,8 @@ pub type VariantAdapter(e) {
     /// JSON representation of this variant.
     /// The given enum value MUST be this variant.
     to_json: fn(e, Bool) -> json.Json,
+    /// Readable JSON code representation of this variant.
+    to_readable_json_code: fn(e, String) -> string_tree.StringTree,
     /// For wrapper variants: decodes the payload JSON into `e`.
     /// For constant variants: returns `Ok(instance)` unconditionally.
     wrap_from_json: fn(UnrecognizedValues) -> decode.Decoder(e),
@@ -116,6 +119,9 @@ pub fn constant_variant(
         True -> json.string(name)
       }
     },
+    to_readable_json_code: fn(_e, _eol_indent) {
+      json.to_string_tree(json.string(name))
+    },
     wrap_from_json: fn(_keep) { decode.success(instance) },
     encode_payload: fn(_e, tree) { tree },
     wrap_decode: fn(bits, _keep) { Ok(#(instance, bits)) },
@@ -157,6 +163,18 @@ pub fn wrapper_variant(
           ])
         }
       }
+    },
+    to_readable_json_code: fn(e, eol_indent) {
+      let ta = serializer_fn().internal_adapter
+      let v = unwrap(e)
+      let child_indent = eol_indent <> "  "
+      serializer.readable_json_object(
+        [
+          #("kind", json.to_string_tree(json.string(name))),
+          #("value", ta.to_readable_json_code(v, child_indent)),
+        ],
+        eol_indent,
+      )
     },
     wrap_from_json: fn(keep) {
       let ta = serializer_fn().internal_adapter
@@ -252,6 +270,15 @@ pub fn new_serializer(
           readable,
         )
       },
+      to_readable_json_code: fn(e, eol_indent) {
+        enum_append_readable_json_code(
+          variants,
+          get_kind_ordinal,
+          get_unrecognized,
+          e,
+          eol_indent,
+        )
+      },
       decode_json: fn(keep) {
         use d <- decode.then(decode.dynamic)
         case
@@ -316,6 +343,29 @@ fn enum_append_json(
         Ok(v) -> v.to_json(e, readable)
       }
   }
+}
+
+fn enum_append_readable_json_code(
+  variants: List(VariantAdapter(e)),
+  get_kind_ordinal: fn(e) -> Int,
+  get_unrecognized: fn(e) -> UnrecognizedVariant(e),
+  e: e,
+  eol_indent: String,
+) -> string_tree.StringTree {
+  case get_kind_ordinal(e) {
+    0 -> unknown_to_readable_json_code(get_unrecognized(e))
+    ko ->
+      case list.drop(variants, ko - 1) |> list.first {
+        Error(_) -> json.to_string_tree(json.int(0))
+        Ok(v) -> v.to_readable_json_code(e, eol_indent)
+      }
+  }
+}
+
+fn unknown_to_readable_json_code(
+  _unrec: UnrecognizedVariant(e),
+) -> string_tree.StringTree {
+  json.to_string_tree(json.string("UNKNOWN"))
 }
 
 fn unknown_to_json(unrec: UnrecognizedVariant(e), readable: Bool) -> json.Json {
