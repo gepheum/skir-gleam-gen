@@ -5,7 +5,7 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
-import internal/serializers
+import serializers
 import serializer as serializer_
 import skirout/gepheum/skir_golden_tests/goldens
 import type_descriptor

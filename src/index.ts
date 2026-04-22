@@ -233,7 +233,7 @@ const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["internal/recursive", "recursive_"],
   ["internal/method", "method_"],
   ["serializer", "serializer_"],
-  ["internal/serializers", "serializers_"],
+  ["serializers", "serializers_"],
   ["type_descriptor", "type_descriptor_"],
   ["internal/struct_serializer", "struct_serializer_"],
   ["gleam/list", "list_"],

@@ -61,7 +61,7 @@ export class TypeSpeller {
    * Returns the Gleam serializer expression for the given type.
    */
   getSerializerExpression(type: ResolvedType): string {
-    this.neededModules.add("internal/serializers");
+    this.neededModules.add("serializers");
     switch (type.kind) {
       case "primitive": {
         switch (type.primitive) {
