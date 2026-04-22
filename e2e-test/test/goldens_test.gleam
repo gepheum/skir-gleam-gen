@@ -5,8 +5,9 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
-import serializer.{Drop, Keep}
-import skir_client
+import serializer as serializer_
+import internal/serializers
+import type_descriptor
 import skirout/gepheum/skir_golden_tests/goldens
 
 // =============================================================================
@@ -25,37 +26,37 @@ type EvaluatedValue {
   )
 }
 
-fn make_ev(value: a, serializer: skir_client.Serializer(a)) -> EvaluatedValue {
+fn make_ev(value: a, ser: serializer_.Serializer(a)) -> EvaluatedValue {
   EvaluatedValue(
-    to_bytes: fn() { skir_client.to_bytes(serializer, value) },
-    to_dense_json: fn() { skir_client.to_dense_json_code(serializer, value) },
-    to_readable_json: fn() { skir_client.to_readable_json_code(serializer, value) },
+    to_bytes: fn() { serializer_.to_bytes(ser, value) },
+    to_dense_json: fn() { serializer_.to_dense_json_code(ser, value) },
+    to_readable_json: fn() { serializer_.to_readable_json_code(ser, value) },
     type_descriptor_json: fn() {
-      skir_client.type_descriptor_to_json(skir_client.type_descriptor(
-        serializer,
+      type_descriptor.type_descriptor_to_json(serializer_.type_descriptor(
+        ser,
       ))
     },
     from_json_keep: fn(json) {
       case
-        skir_client.from_json_code_with_options(
-          serializer,
+        serializer_.from_json_code_with_options(
+          ser,
           json,
-          keep_unrecognized_values: Keep,
+          keep_unrecognized_values: serializer_.Keep,
         )
       {
-        Ok(v) -> Ok(make_ev(v, serializer))
+        Ok(v) -> Ok(make_ev(v, ser))
         Error(e) -> Error(e)
       }
     },
     from_json_drop: fn(json) {
-      case skir_client.from_json_code(serializer, json) {
-        Ok(v) -> Ok(make_ev(v, serializer))
+      case serializer_.from_json_code(ser, json) {
+        Ok(v) -> Ok(make_ev(v, ser))
         Error(e) -> Error(e)
       }
     },
     from_bytes_drop: fn(bytes) {
-      case skir_client.from_bytes(serializer, bytes) {
-        Ok(v) -> Ok(make_ev(v, serializer))
+      case serializer_.from_bytes(ser, bytes) {
+        Ok(v) -> Ok(make_ev(v, ser))
         Error(e) -> Error(e)
       }
     },
@@ -119,27 +120,27 @@ fn evaluate_typed_value(
 ) -> Result(EvaluatedValue, String) {
   case tv {
     goldens.TypedValueUnknown(_) -> Error("unknown TypedValue variant")
-    goldens.TypedValueBool(v) -> Ok(make_ev(v, skir_client.bool_serializer()))
-    goldens.TypedValueInt32(v) -> Ok(make_ev(v, skir_client.int32_serializer()))
-    goldens.TypedValueInt64(v) -> Ok(make_ev(v, skir_client.int64_serializer()))
+    goldens.TypedValueBool(v) -> Ok(make_ev(v, serializers.bool_serializer()))
+    goldens.TypedValueInt32(v) -> Ok(make_ev(v, serializers.int32_serializer()))
+    goldens.TypedValueInt64(v) -> Ok(make_ev(v, serializers.int64_serializer()))
     goldens.TypedValueHash64(v) ->
-      Ok(make_ev(v, skir_client.hash64_serializer()))
+      Ok(make_ev(v, serializers.hash64_serializer()))
     goldens.TypedValueFloat32(v) ->
-      Ok(make_ev(v, skir_client.float32_serializer()))
+      Ok(make_ev(v, serializers.float32_serializer()))
     goldens.TypedValueFloat64(v) ->
-      Ok(make_ev(v, skir_client.float64_serializer()))
+      Ok(make_ev(v, serializers.float64_serializer()))
     goldens.TypedValueTimestamp(v) ->
-      Ok(make_ev(v, skir_client.timestamp_serializer()))
+      Ok(make_ev(v, serializers.timestamp_serializer()))
     goldens.TypedValueString(v) ->
-      Ok(make_ev(v, skir_client.string_serializer()))
-    goldens.TypedValueBytes(v) -> Ok(make_ev(v, skir_client.bytes_serializer()))
+      Ok(make_ev(v, serializers.string_serializer()))
+    goldens.TypedValueBytes(v) -> Ok(make_ev(v, serializers.bytes_serializer()))
     goldens.TypedValueBoolOptional(v) ->
       Ok(make_ev(
         v,
-        skir_client.optional_serializer(skir_client.bool_serializer()),
+        serializers.optional_serializer(serializers.bool_serializer()),
       ))
     goldens.TypedValueInts(v) ->
-      Ok(make_ev(v, skir_client.list_serializer(skir_client.int32_serializer())))
+      Ok(make_ev(v, serializers.list_serializer(serializers.int32_serializer())))
     goldens.TypedValuePoint(v) -> Ok(make_ev(v, goldens.point_serializer()))
     goldens.TypedValueColor(v) -> Ok(make_ev(v, goldens.color_serializer()))
     goldens.TypedValueMyEnum(v) -> Ok(make_ev(v, goldens.my_enum_serializer()))
@@ -165,161 +166,161 @@ fn evaluate_typed_value(
     }
     goldens.TypedValuePointFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code_with_options(
+      serializer_.from_json_code_with_options(
         goldens.point_serializer(),
         json,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromJsonKeepUnrecognized: " <> e })
     }
     goldens.TypedValuePointFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code(goldens.point_serializer(), json)
+      serializer_.from_json_code(goldens.point_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromJsonDropUnrecognized: " <> e })
     }
     goldens.TypedValuePointFromBytesKeepUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes_with_options(
+      serializer_.from_bytes_with_options(
         goldens.point_serializer(),
         bytes,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromBytesKeepUnrecognized: " <> e })
     }
     goldens.TypedValuePointFromBytesDropUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes(goldens.point_serializer(), bytes)
+      serializer_.from_bytes(goldens.point_serializer(), bytes)
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromBytesDropUnrecognized: " <> e })
     }
     goldens.TypedValueColorFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code_with_options(
+      serializer_.from_json_code_with_options(
         goldens.color_serializer(),
         json,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromJsonKeepUnrecognized: " <> e })
     }
     goldens.TypedValueColorFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code(goldens.color_serializer(), json)
+      serializer_.from_json_code(goldens.color_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromJsonDropUnrecognized: " <> e })
     }
     goldens.TypedValueColorFromBytesKeepUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes_with_options(
+      serializer_.from_bytes_with_options(
         goldens.color_serializer(),
         bytes,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromBytesKeepUnrecognized: " <> e })
     }
     goldens.TypedValueColorFromBytesDropUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes(goldens.color_serializer(), bytes)
+      serializer_.from_bytes(goldens.color_serializer(), bytes)
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromBytesDropUnrecognized: " <> e })
     }
     goldens.TypedValueMyEnumFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code_with_options(
+      serializer_.from_json_code_with_options(
         goldens.my_enum_serializer(),
         json,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromJsonKeepUnrecognized: " <> e })
     }
     goldens.TypedValueMyEnumFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code(goldens.my_enum_serializer(), json)
+      serializer_.from_json_code(goldens.my_enum_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromJsonDropUnrecognized: " <> e })
     }
     goldens.TypedValueMyEnumFromBytesKeepUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes_with_options(
+      serializer_.from_bytes_with_options(
         goldens.my_enum_serializer(),
         bytes,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromBytesKeepUnrecognized: " <> e })
     }
     goldens.TypedValueMyEnumFromBytesDropUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes(goldens.my_enum_serializer(), bytes)
+      serializer_.from_bytes(goldens.my_enum_serializer(), bytes)
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromBytesDropUnrecognized: " <> e })
     }
     goldens.TypedValueEnumAFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code_with_options(
+      serializer_.from_json_code_with_options(
         goldens.enum_a_serializer(),
         json,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromJsonKeepUnrecognized: " <> e })
     }
     goldens.TypedValueEnumAFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code(goldens.enum_a_serializer(), json)
+      serializer_.from_json_code(goldens.enum_a_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromJsonDropUnrecognized: " <> e })
     }
     goldens.TypedValueEnumAFromBytesKeepUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes_with_options(
+      serializer_.from_bytes_with_options(
         goldens.enum_a_serializer(),
         bytes,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromBytesKeepUnrecognized: " <> e })
     }
     goldens.TypedValueEnumAFromBytesDropUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes(goldens.enum_a_serializer(), bytes)
+      serializer_.from_bytes(goldens.enum_a_serializer(), bytes)
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromBytesDropUnrecognized: " <> e })
     }
     goldens.TypedValueEnumBFromJsonKeepUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code_with_options(
+      serializer_.from_json_code_with_options(
         goldens.enum_b_serializer(),
         json,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromJsonKeepUnrecognized: " <> e })
     }
     goldens.TypedValueEnumBFromJsonDropUnrecognized(expr) -> {
       use json <- result.try(evaluate_string(expr))
-      skir_client.from_json_code(goldens.enum_b_serializer(), json)
+      serializer_.from_json_code(goldens.enum_b_serializer(), json)
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromJsonDropUnrecognized: " <> e })
     }
     goldens.TypedValueEnumBFromBytesKeepUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes_with_options(
+      serializer_.from_bytes_with_options(
         goldens.enum_b_serializer(),
         bytes,
-        keep_unrecognized_values: Keep,
+        keep_unrecognized_values: serializer_.Keep,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromBytesKeepUnrecognized: " <> e })
     }
     goldens.TypedValueEnumBFromBytesDropUnrecognized(expr) -> {
       use bytes <- result.try(evaluate_bytes(expr))
-      skir_client.from_bytes(goldens.enum_b_serializer(), bytes)
+      serializer_.from_bytes(goldens.enum_b_serializer(), bytes)
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromBytesDropUnrecognized: " <> e })
     }
@@ -458,10 +459,10 @@ fn verify_reserialize_value(
               bit_array.append(payload, <<1>>),
             )
           case
-            skir_client.from_bytes_with_options(
+            serializer_.from_bytes_with_options(
               goldens.point_serializer(),
               buf,
-              keep_unrecognized_values: Drop,
+              keep_unrecognized_values: serializer_.Drop,
             )
           {
             Error(e) ->
@@ -657,10 +658,10 @@ fn verify_reserialize_value(
           )
         True ->
           // Also round-trip the type descriptor itself
-          case skir_client.type_descriptor_from_json(expected_td) {
+          case type_descriptor.type_descriptor_from_json(expected_td) {
             Error(e) -> Error("failed to parse type descriptor: " <> e)
             Ok(parsed) -> {
-              let reparsed_td = skir_client.type_descriptor_to_json(parsed)
+              let reparsed_td = type_descriptor.type_descriptor_to_json(parsed)
               case reparsed_td == expected_td {
                 True -> Ok(Nil)
                 False ->
@@ -744,12 +745,12 @@ fn verify_reserialize_large_string(
   input: goldens.AssertionReserializeLargeString,
 ) -> Result(Nil, String) {
   let s = string.repeat("a", input.num_chars)
-  let ser = skir_client.string_serializer()
+  let ser = serializers.string_serializer()
 
   // Dense JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_dense_json_code(ser, s)
-    case skir_client.from_json_code(ser, json) {
+    let json = serializer_.to_dense_json_code(ser, s)
+    case serializer_.from_json_code(ser, json) {
       Error(e) -> Error("large string dense JSON round-trip: " <> e)
       Ok(round_trip) ->
         case round_trip == s {
@@ -767,8 +768,8 @@ fn verify_reserialize_large_string(
 
   // Readable JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_readable_json_code(ser, s)
-    case skir_client.from_json_code(ser, json) {
+    let json = serializer_.to_readable_json_code(ser, s)
+    case serializer_.from_json_code(ser, json) {
       Error(e) -> Error("large string readable JSON round-trip: " <> e)
       Ok(round_trip) ->
         case round_trip == s {
@@ -785,7 +786,7 @@ fn verify_reserialize_large_string(
   })
 
   // Binary round-trip + prefix check
-  let bytes = skir_client.to_bytes(ser, s)
+  let bytes = serializer_.to_bytes(ser, s)
   let prefix = input.expected_byte_prefix
   use _ <- result.try(case starts_with(bytes, prefix) {
     True -> Ok(Nil)
@@ -801,7 +802,7 @@ fn verify_reserialize_large_string(
       )
     }
   })
-  case skir_client.from_bytes(ser, bytes) {
+  case serializer_.from_bytes(ser, bytes) {
     Error(e) -> Error("large string bytes round-trip: " <> e)
     Ok(round_trip) ->
       case round_trip == s {
@@ -822,15 +823,15 @@ fn verify_reserialize_large_array(
 ) -> Result(Nil, String) {
   let n = input.num_items
   let array = list.repeat(1, n)
-  let ser = skir_client.list_serializer(skir_client.int32_serializer())
+  let ser = serializers.list_serializer(serializers.int32_serializer())
   let is_correct = fn(v: List(Int)) -> Bool {
     list.length(v) == n && list.all(v, fn(x) { x == 1 })
   }
 
   // Dense JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_dense_json_code(ser, array)
-    case skir_client.from_json_code(ser, json) {
+    let json = serializer_.to_dense_json_code(ser, array)
+    case serializer_.from_json_code(ser, json) {
       Error(e) -> Error("large array dense JSON round-trip: " <> e)
       Ok(round_trip) ->
         case is_correct(round_trip) {
@@ -849,8 +850,8 @@ fn verify_reserialize_large_array(
 
   // Readable JSON round-trip
   use _ <- result.try({
-    let json = skir_client.to_readable_json_code(ser, array)
-    case skir_client.from_json_code(ser, json) {
+    let json = serializer_.to_readable_json_code(ser, array)
+    case serializer_.from_json_code(ser, json) {
       Error(e) -> Error("large array readable JSON round-trip: " <> e)
       Ok(round_trip) ->
         case is_correct(round_trip) {
@@ -868,7 +869,7 @@ fn verify_reserialize_large_array(
   })
 
   // Binary round-trip + prefix check
-  let bytes = skir_client.to_bytes(ser, array)
+  let bytes = serializer_.to_bytes(ser, array)
   let prefix = input.expected_byte_prefix
   use _ <- result.try(case starts_with(bytes, prefix) {
     True -> Ok(Nil)
@@ -884,7 +885,7 @@ fn verify_reserialize_large_array(
       )
     }
   })
-  case skir_client.from_bytes(ser, bytes) {
+  case serializer_.from_bytes(ser, bytes) {
     Error(e) -> Error("large array bytes round-trip: " <> e)
     Ok(round_trip) ->
       case is_correct(round_trip) {
@@ -906,12 +907,12 @@ fn verify_enum_a_from_json_is_constant(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_string(a.actual))
   case
-    skir_client.from_json_code_with_options(
+    serializer_.from_json_code_with_options(
       goldens.enum_a_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {
-        True -> Keep
-        False -> Drop
+        True -> serializer_.Keep
+        False -> serializer_.Drop
       },
     )
   {
@@ -934,12 +935,12 @@ fn verify_enum_a_from_bytes_is_constant(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_bytes(a.actual))
   case
-    skir_client.from_bytes_with_options(
+    serializer_.from_bytes_with_options(
       goldens.enum_a_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {
-        True -> Keep
-        False -> Drop
+        True -> serializer_.Keep
+        False -> serializer_.Drop
       },
     )
   {
@@ -962,12 +963,12 @@ fn verify_enum_b_from_json_is_wrapper_b(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_string(a.actual))
   case
-    skir_client.from_json_code_with_options(
+    serializer_.from_json_code_with_options(
       goldens.enum_b_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {
-        True -> Keep
-        False -> Drop
+        True -> serializer_.Keep
+        False -> serializer_.Drop
       },
     )
   {
@@ -992,12 +993,12 @@ fn verify_enum_b_from_bytes_is_wrapper_b(
 ) -> Result(Nil, String) {
   use actual <- result.try(evaluate_bytes(a.actual))
   case
-    skir_client.from_bytes_with_options(
+    serializer_.from_bytes_with_options(
       goldens.enum_b_serializer(),
       actual,
       keep_unrecognized_values: case a.keep_unrecognized {
-        True -> Keep
-        False -> Drop
+        True -> serializer_.Keep
+        False -> serializer_.Drop
       },
     )
   {

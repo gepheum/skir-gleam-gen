@@ -1,4 +1,7 @@
 // TODO: rename timestamp_default to unix_epoch
+// TODO: serializers should actually not be in 'internal'
+// TODO: the recursive fields are completely bugged, see the constructor. we need a special serializer.
+// TODO: we can probably remove the `pub fn decode_json_field()`
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: review everything
 // TODO: look at generated comments
@@ -227,7 +230,11 @@ function computeModuleNames(records: readonly RecordLocation[]): {
 const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
   ["timestamp", "timestamp_"],
-  ["skir_client", "skir_client_"],
+  ["internal/recursive", "recursive_"],
+  ["internal/method", "method_"],
+  ["serializer", "serializer_"],
+  ["internal/serializers", "serializers_"],
+  ["type_descriptor", "type_descriptor_"],
   ["internal/struct_serializer", "struct_serializer_"],
   ["gleam/list", "list_"],
   ["gleam/result", "result_"],
@@ -494,12 +501,12 @@ class GleamSourceFileGenerator {
       const fieldName = toFieldName(field.name.text);
       const entry = value.entries[field.name.text];
       if (field.isRecursive === "hard") {
-        this.neededModules.add("skir_client");
+        this.neededModules.add("internal/recursive");
         if (entry) {
           const innerExpr = this.valueToGleamExpr(entry.value, field.type);
-          args.push(`${fieldName}_rec: skir_client_.Some(\n${innerExpr}\n)`);
+          args.push(`${fieldName}_rec: recursive_.Some(\n${innerExpr}\n)`);
         } else {
-          args.push(`${fieldName}_rec: skir_client_.Default`);
+          args.push(`${fieldName}_rec: recursive_.Default`);
         }
       } else {
         if (entry) {
@@ -564,7 +571,7 @@ class GleamSourceFileGenerator {
   }
 
   private writeMethod(method: Method<false>): void {
-    this.neededModules.add("skir_client");
+    this.neededModules.add("internal/method");
     const { typeSpeller } = this;
     const gleamName =
       convertCase(method.name.text, "lower_underscore") + "_method";
@@ -580,9 +587,9 @@ class GleamSourceFileGenerator {
     const doc = commentify(docToCommentText(method.doc));
     if (doc) this.push(doc);
     this.push(
-      `pub fn ${gleamName}() -> skir_client_.Method(${requestType}, ${responseType}) {\n`,
+      `pub fn ${gleamName}() -> method_.Method(${requestType}, ${responseType}) {\n`,
     );
-    this.push(`skir_client_.Method(\n`);
+    this.push(`method_.Method(\n`);
     this.push(`name: ${JSON.stringify(method.name.text)},\n`);
     this.push(`number: ${method.number},\n`);
     this.push(`doc: ${JSON.stringify(docToCommentText(method.doc))},\n`);
@@ -593,7 +600,7 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
-    this.neededModules.add("skir_client");
+    this.neededModules.add("serializer");
     this.neededModules.add("internal/struct_serializer");
     this.neededModules.add("gleam/list");
     this.neededModules.add("gleam/result");
@@ -616,10 +623,11 @@ class GleamSourceFileGenerator {
     const hardRecFields = fields.filter((f) => f.isRecursive === "hard");
     if (hardRecFields.length > 0) {
       this.neededModules.add("gleam/option");
+      this.neededModules.add("internal/recursive");
     }
 
     // Type definition.
-    // Hard-recursive fields are stored internally as skir_client_.Recursive(T) under the
+    // Hard-recursive fields are stored internally as recursive_.Recursive(T) under the
     // label `fieldname_rec` to avoid infinite-size types.
     this.push(`pub type ${typeName} {\n`);
     this.push(`${typeName}(\n`);
@@ -628,7 +636,7 @@ class GleamSourceFileGenerator {
       this.push(commentify(docToCommentText(field.doc)));
       if (field.isRecursive === "hard") {
         const inner = typeSpeller.getGleamType(field.type!);
-        this.push(`${fieldName}_rec: skir_client_.Recursive(${inner}),\n`);
+        this.push(`${fieldName}_rec: recursive_.Recursive(${inner}),\n`);
       } else {
         const gleamType = typeSpeller.getGleamType(field.type!);
         this.push(`${fieldName}: ${gleamType},\n`);
@@ -653,8 +661,8 @@ class GleamSourceFileGenerator {
         `pub fn ${fnPrefix}${fieldName}(s: ${typeName}) -> ${innerType} {\n`,
       );
       this.push(`case s.${fieldName}_rec {\n`);
-      this.push(`skir_client_.Some(v) -> v\n`);
-      this.push(`skir_client_.Default -> ${defExpr}\n`);
+      this.push(`recursive_.Some(v) -> v\n`);
+      this.push(`recursive_.Default -> ${defExpr}\n`);
       this.push("}\n");
       this.push("}\n\n");
     }
@@ -667,7 +675,7 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: skir_client_.Default,\n`);
+        this.push(`${fieldName}_rec: recursive_.Default,\n`);
       } else {
         const defExpr = typeSpeller.getDefaultExpression(field.type!);
         this.push(`${fieldName}: ${defExpr},\n`);
@@ -696,7 +704,7 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       if (field.isRecursive === "hard") {
-        this.push(`${fieldName}_rec: skir_client_.Some(${fieldName}),\n`);
+        this.push(`${fieldName}_rec: recursive_.Some(${fieldName}),\n`);
       } else {
         this.push(`${fieldName}: ${fieldName},\n`);
       }
@@ -713,7 +721,7 @@ class GleamSourceFileGenerator {
     const structDefaultExpr = `${fnPrefix}default`;
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> serializer_.Serializer(${typeName}) {\n`,
     );
     // Hoist non-recursive serializer construction so it is created once and
     // reused in ordered_fields, decode_dense_json, and decode_binary.
@@ -748,7 +756,7 @@ class GleamSourceFileGenerator {
       if (isHardRec) {
         this.push(`get: fn(s: ${typeName}) { ${fnPrefix}${fieldName}(s) },\n`);
         this.push(
-          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: skir_client_.Some(v)) },\n`,
+          `set: fn(s: ${typeName}, v: ${fieldType}) { ${typeName}(..s, ${fieldName}_rec: recursive_.Some(v)) },\n`,
         );
       } else {
         this.push(`get: fn(s: ${typeName}) { s.${fieldName} },\n`);
@@ -809,8 +817,8 @@ class GleamSourceFileGenerator {
             `use ${varName}_rec_opt_ <- result_.try(struct_serializer_.decode_json_field_opt(slot_${slot}_dyn, keep, serializer: ${serExpr}))\n`,
           );
           this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
-          this.push(`option_.None -> skir_client_.Default\n`);
-          this.push(`option_.Some(v_) -> skir_client_.Some(v_)\n`);
+          this.push(`option_.None -> recursive_.Default\n`);
+          this.push(`option_.Some(v_) -> recursive_.Some(v_)\n`);
           this.push(`}\n`);
         } else {
           this.push(
@@ -850,8 +858,8 @@ class GleamSourceFileGenerator {
             `use #(${varName}_rec_opt_, bits) <- result_.try(struct_serializer_.decode_binary_field_opt(bits, slots_to_fill > ${slot}, keep, serializer: ${serExpr}))\n`,
           );
           this.push(`let ${varName}_rec = case ${varName}_rec_opt_ {\n`);
-          this.push(`option_.None -> skir_client_.Default\n`);
-          this.push(`option_.Some(v_) -> skir_client_.Some(v_)\n`);
+          this.push(`option_.None -> recursive_.Default\n`);
+          this.push(`option_.Some(v_) -> recursive_.Some(v_)\n`);
           this.push(`}\n`);
         } else {
           this.push(
@@ -876,7 +884,7 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForEnum(record: RecordLocation): void {
-    this.neededModules.add("skir_client");
+    this.neededModules.add("serializer");
     this.neededModules.add("internal/enum_serializer");
     const { typeSpeller } = this;
     const typeName = this.typeNameFor(record);
@@ -923,7 +931,7 @@ class GleamSourceFileGenerator {
     // Serializer.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> serializer_.Serializer(${typeName}) {\n`,
     );
     this.push(`enum_serializer_.new_serializer(\n`);
     this.push(`name: ${JSON.stringify(record.record.name.text)},\n`);

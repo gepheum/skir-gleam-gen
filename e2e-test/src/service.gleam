@@ -8,7 +8,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 import serializer.{type UnrecognizedValues, Drop, Keep}
-import skir_client.{type Method}
+import internal/method.{type Method}
 import type_descriptor
 
 // Studio JS CDN URL — override with set_studio_app_js_url if needed.

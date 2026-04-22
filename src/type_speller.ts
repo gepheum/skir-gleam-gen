@@ -61,28 +61,28 @@ export class TypeSpeller {
    * Returns the Gleam serializer expression for the given type.
    */
   getSerializerExpression(type: ResolvedType): string {
-    this.neededModules.add("skir_client");
+    this.neededModules.add("internal/serializers");
     switch (type.kind) {
       case "primitive": {
         switch (type.primitive) {
           case "bool":
-            return "skir_client_.bool_serializer()";
+            return "serializers_.bool_serializer()";
           case "int32":
-            return "skir_client_.int32_serializer()";
+            return "serializers_.int32_serializer()";
           case "int64":
-            return "skir_client_.int64_serializer()";
+            return "serializers_.int64_serializer()";
           case "hash64":
-            return "skir_client_.hash64_serializer()";
+            return "serializers_.hash64_serializer()";
           case "float32":
-            return "skir_client_.float32_serializer()";
+            return "serializers_.float32_serializer()";
           case "float64":
-            return "skir_client_.float64_serializer()";
+            return "serializers_.float64_serializer()";
           case "timestamp":
-            return "skir_client_.timestamp_serializer()";
+            return "serializers_.timestamp_serializer()";
           case "string":
-            return "skir_client_.string_serializer()";
+            return "serializers_.string_serializer()";
           case "bytes":
-            return "skir_client_.bytes_serializer()";
+            return "serializers_.bytes_serializer()";
         }
         const _: never = type.primitive;
         throw TypeError();
@@ -92,19 +92,19 @@ export class TypeSpeller {
         if (type.key) {
           const keyExtractor = type.key.path.map((p) => p.name.text).join(".");
           return (
-            "skir_client_.keyed_list_serializer(\n" +
+            "serializers_.keyed_list_serializer(\n" +
             itemSerializer +
             ",\n" +
             JSON.stringify(keyExtractor) +
             ",\n)"
           );
         } else {
-          return "skir_client_.list_serializer(\n" + itemSerializer + ",\n)";
+          return "serializers_.list_serializer(\n" + itemSerializer + ",\n)";
         }
       }
       case "optional":
         return (
-          "skir_client_.optional_serializer(\n" +
+          "serializers_.optional_serializer(\n" +
           this.getSerializerExpression(type.other) +
           ",\n)"
         );
@@ -155,23 +155,23 @@ export class TypeSpeller {
    * Used to populate the `type_sig` field of FieldSpec for recursive fields.
    */
   getTypeSignatureExpression(type: ResolvedType): string {
-    this.neededModules.add("skir_client");
+    this.neededModules.add("type_descriptor");
     switch (type.kind) {
       case "primitive": {
         const prim = (
           {
-            bool: "skir_client_.prim_bool()",
-            int32: "skir_client_.prim_int32()",
-            int64: "skir_client_.prim_int64()",
-            hash64: "skir_client_.prim_hash64()",
-            float32: "skir_client_.prim_float32()",
-            float64: "skir_client_.prim_float64()",
-            timestamp: "skir_client_.prim_timestamp()",
-            string: "skir_client_.prim_string()",
-            bytes: "skir_client_.prim_bytes()",
+            bool: "type_descriptor_.Bool",
+            int32: "type_descriptor_.Int32",
+            int64: "type_descriptor_.Int64",
+            hash64: "type_descriptor_.Hash64",
+            float32: "type_descriptor_.Float32",
+            float64: "type_descriptor_.Float64",
+            timestamp: "type_descriptor_.Timestamp",
+            string: "type_descriptor_.StringType",
+            bytes: "type_descriptor_.Bytes",
           } as const
         )[type.primitive];
-        return `skir_client_.type_sig_primitive(${prim})`;
+        return `type_descriptor_.Primitive(${prim})`;
       }
       case "record": {
         const rec = this.recordMap.get(type.key)!;
@@ -179,16 +179,16 @@ export class TypeSpeller {
           .map((a) => a.name.text)
           .join(".");
         const id = `${rec.modulePath}:${qualifiedName}`;
-        return `skir_client_.type_sig_record(${JSON.stringify(id)})`;
+        return `type_descriptor_.Record(${JSON.stringify(id)})`;
       }
       case "array": {
         const itemSig = this.getTypeSignatureExpression(type.item);
         const keyExtractor =
           type.key?.path.map((p) => p.name.text).join(".") ?? "";
-        return `skir_client_.type_sig_array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
+        return `type_descriptor_.Array(${itemSig}, ${JSON.stringify(keyExtractor)})`;
       }
       case "optional": {
-        return `skir_client_.type_sig_optional(${this.getTypeSignatureExpression(type.other)})`;
+        return `type_descriptor_.Optional(${this.getTypeSignatureExpression(type.other)})`;
       }
     }
   }
