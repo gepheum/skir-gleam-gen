@@ -352,5 +352,3 @@ pub fn prim_string() -> PrimitiveType {
 pub fn prim_bytes() -> PrimitiveType {
   type_descriptor.Bytes
 }
-
-
