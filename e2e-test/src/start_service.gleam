@@ -13,7 +13,9 @@ import gleam/int
 import gleam/io
 import gleam/option
 import mist
-import service.{type RawResponse, type Service, type ServiceError, ServiceError}
+import service.{
+  type RawResponse, type Service, type ServiceError, E404xNotFound, ServiceError,
+}
 import skirout/user.{type User, type UserProfile, User, UserProfile} as user_out
 
 // ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ fn get_user(
     Ok(profile) -> #(Ok(profile), Nil, state)
     Error(_) -> #(
       Error(ServiceError(
-        status_code: 404,
+        status: E404xNotFound,
         message: "user not found: " <> int.to_string(req.user_id),
       )),
       Nil,
@@ -78,7 +80,8 @@ fn state_loop(
 ) -> Nil {
   case process.receive_forever(subject) {
     HandleRpc(reply, input) -> {
-      let #(raw, _meta, new_state) = service.handle_request(svc, input, Nil, state)
+      let #(raw, _meta, new_state) =
+        service.handle_request(svc, input, Nil, state)
       process.send(reply, raw)
       state_loop(subject, svc, new_state)
     }

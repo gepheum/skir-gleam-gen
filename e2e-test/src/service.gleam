@@ -21,8 +21,51 @@ const default_studio_url = "https://cdn.jsdelivr.net/npm/skir-studio/dist/skir-s
 /// A controlled error that is sent back to the caller as a non-2xx HTTP
 /// response.  Use this in your method implementations to signal expected
 /// failures (e.g. "not found", "permission denied").
+pub type HttpErrorCode {
+  E400xBadRequest
+  E401xUnauthorized
+  E402xPaymentRequired
+  E403xForbidden
+  E404xNotFound
+  E405xMethodNotAllowed
+  E406xNotAcceptable
+  E407xProxyAuthenticationRequired
+  E408xRequestTimeout
+  E409xConflict
+  E410xGone
+  E411xLengthRequired
+  E412xPreconditionFailed
+  E413xContentTooLarge
+  E414xUriTooLong
+  E415xUnsupportedMediaType
+  E416xRangeNotSatisfiable
+  E417xExpectationFailed
+  E418xImATeapot
+  E421xMisdirectedRequest
+  E422xUnprocessableContent
+  E423xLocked
+  E424xFailedDependency
+  E425xTooEarly
+  E426xUpgradeRequired
+  E428xPreconditionRequired
+  E429xTooManyRequests
+  E431xRequestHeaderFieldsTooLarge
+  E451xUnavailableForLegalReasons
+  E500xInternalServerError
+  E501xNotImplemented
+  E502xBadGateway
+  E503xServiceUnavailable
+  E504xGatewayTimeout
+  E505xHttpVersionNotSupported
+  E506xVariantAlsoNegotiates
+  E507xInsufficientStorage
+  E508xLoopDetected
+  E510xNotExtended
+  E511xNetworkAuthenticationRequired
+}
+
 pub type ServiceError {
-  ServiceError(status_code: Int, message: String)
+  ServiceError(status: HttpErrorCode, message: String)
 }
 
 // =============================================================================
@@ -78,7 +121,7 @@ fn make_erased_method(
     {
       Error(errors) -> #(
         Error(ServiceError(
-          status_code: 400,
+          status: E400xBadRequest,
           message: "bad request: " <> json_utils.decode_errors_to_string(errors),
         )),
         meta,
@@ -319,8 +362,12 @@ fn invoke_entry(
         content_type: "application/json",
         data: response_json,
       )
-    Error(ServiceError(status_code: code, message: msg)) ->
-      RawResponse(status_code: code, content_type: "text/plain", data: msg)
+    Error(ServiceError(status: status, message: msg)) ->
+      RawResponse(
+        status_code: error_status_to_http_code(status),
+        content_type: "text/plain",
+        data: msg,
+      )
   }
   #(raw, new_meta, new_state)
 }
@@ -465,6 +512,51 @@ fn split_colon4(s: String) -> Result(#(String, String, String, String), Nil) {
   }
 }
 
+fn error_status_to_http_code(status: HttpErrorCode) -> Int {
+  case status {
+    E400xBadRequest -> 400
+    E401xUnauthorized -> 401
+    E402xPaymentRequired -> 402
+    E403xForbidden -> 403
+    E404xNotFound -> 404
+    E405xMethodNotAllowed -> 405
+    E406xNotAcceptable -> 406
+    E407xProxyAuthenticationRequired -> 407
+    E408xRequestTimeout -> 408
+    E409xConflict -> 409
+    E410xGone -> 410
+    E411xLengthRequired -> 411
+    E412xPreconditionFailed -> 412
+    E413xContentTooLarge -> 413
+    E414xUriTooLong -> 414
+    E415xUnsupportedMediaType -> 415
+    E416xRangeNotSatisfiable -> 416
+    E417xExpectationFailed -> 417
+    E418xImATeapot -> 418
+    E421xMisdirectedRequest -> 421
+    E422xUnprocessableContent -> 422
+    E423xLocked -> 423
+    E424xFailedDependency -> 424
+    E425xTooEarly -> 425
+    E426xUpgradeRequired -> 426
+    E428xPreconditionRequired -> 428
+    E429xTooManyRequests -> 429
+    E431xRequestHeaderFieldsTooLarge -> 431
+    E451xUnavailableForLegalReasons -> 451
+    E500xInternalServerError -> 500
+    E501xNotImplemented -> 501
+    E502xBadGateway -> 502
+    E503xServiceUnavailable -> 503
+    E504xGatewayTimeout -> 504
+    E505xHttpVersionNotSupported -> 505
+    E506xVariantAlsoNegotiates -> 506
+    E507xInsufficientStorage -> 507
+    E508xLoopDetected -> 508
+    E510xNotExtended -> 510
+    E511xNetworkAuthenticationRequired -> 511
+  }
+}
+
 // =============================================================================
 // Private: default error logger (no-op)
 // =============================================================================
@@ -474,4 +566,3 @@ fn split_colon4(s: String) -> Result(#(String, String, String, String), Nil) {
 fn log_to_stderr(_message: String) -> Nil {
   Nil
 }
-

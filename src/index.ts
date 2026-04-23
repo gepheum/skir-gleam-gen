@@ -1,3 +1,4 @@
+// TODO: Service: add input_state, output_state
 // TODO: in the generated code, ask AI if some things are not optimal
 // TODO: look at public symbols
 // TODO: review everything
