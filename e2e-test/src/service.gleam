@@ -130,85 +130,59 @@ pub opaque type Service(meta) {
 }
 
 // =============================================================================
-// ServiceBuilder
+// Service setup
 // =============================================================================
 
-pub opaque type ServiceBuilder(meta) {
-  ServiceBuilder(
-    keep_unrecognized: Bool,
-    can_send_unknown_error_message: Bool,
-    error_logger: fn(String) -> Nil,
-    studio_url: String,
-    methods: List(ErasedMethod(meta)),
-  )
-}
-
-pub fn builder() -> ServiceBuilder(meta) {
-  ServiceBuilder(
+pub fn new() -> Service(meta) {
+  Service(
     keep_unrecognized: False,
     can_send_unknown_error_message: False,
     error_logger: log_to_stderr,
     studio_url: default_studio_url,
-    methods: [],
+    by_number: dict.new(),
+    by_name: dict.new(),
   )
 }
 
 pub fn add_method(
-  builder: ServiceBuilder(meta),
+  service: Service(meta),
   method: Method(req, resp),
   handler: fn(req, meta) -> #(Result(resp, ServiceError), meta),
-) -> ServiceBuilder(meta) {
-  ServiceBuilder(
-    ..builder,
-    methods: list.append(builder.methods, [make_erased_method(method, handler)]),
+) -> Service(meta) {
+  let erased = make_erased_method(method, handler)
+  Service(
+    ..service,
+    by_number: dict.insert(service.by_number, erased.number, erased),
+    by_name: dict.insert(service.by_name, erased.name, erased),
   )
 }
 
 pub fn set_keep_unrecognized_values(
-  builder: ServiceBuilder(meta),
+  service: Service(meta),
   keep: Bool,
-) -> ServiceBuilder(meta) {
-  ServiceBuilder(..builder, keep_unrecognized: keep)
+) -> Service(meta) {
+  Service(..service, keep_unrecognized: keep)
 }
 
 pub fn set_can_send_unknown_error_message(
-  builder: ServiceBuilder(meta),
+  service: Service(meta),
   can_send: Bool,
-) -> ServiceBuilder(meta) {
-  ServiceBuilder(..builder, can_send_unknown_error_message: can_send)
+) -> Service(meta) {
+  Service(..service, can_send_unknown_error_message: can_send)
 }
 
 pub fn set_error_logger(
-  builder: ServiceBuilder(meta),
+  service: Service(meta),
   logger: fn(String) -> Nil,
-) -> ServiceBuilder(meta) {
-  ServiceBuilder(..builder, error_logger: logger)
+) -> Service(meta) {
+  Service(..service, error_logger: logger)
 }
 
 pub fn set_studio_app_js_url(
-  builder: ServiceBuilder(meta),
+  service: Service(meta),
   url: String,
-) -> ServiceBuilder(meta) {
-  ServiceBuilder(..builder, studio_url: url)
-}
-
-pub fn build(builder: ServiceBuilder(meta)) -> Service(meta) {
-  let by_number =
-    list.fold(builder.methods, dict.new(), fn(acc, m) {
-      dict.insert(acc, m.number, m)
-    })
-  let by_name =
-    list.fold(builder.methods, dict.new(), fn(acc, m) {
-      dict.insert(acc, m.name, m)
-    })
-  Service(
-    keep_unrecognized: builder.keep_unrecognized,
-    can_send_unknown_error_message: builder.can_send_unknown_error_message,
-    error_logger: builder.error_logger,
-    studio_url: builder.studio_url,
-    by_number: by_number,
-    by_name: by_name,
-  )
+) -> Service(meta) {
+  Service(..service, studio_url: url)
 }
 
 // =============================================================================

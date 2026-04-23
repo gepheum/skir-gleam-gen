@@ -60,13 +60,12 @@ fn add_user(
 // ---------------------------------------------------------------------------
 
 fn build_service() -> Service(State) {
-  service.builder()
+  service.new()
   |> service.add_method(user_out.get_user_method(), get_user)
   |> service.add_method(user_out.add_user_method(), add_user)
   |> service.set_keep_unrecognized_values(True)
   |> service.set_can_send_unknown_error_message(True)
   |> service.set_error_logger(fn(msg) { io.println_error(msg) })
-  |> service.build()
 }
 
 fn state_loop(
