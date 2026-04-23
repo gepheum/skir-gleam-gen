@@ -5,7 +5,6 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleeunit/should
-import internal/type_adapter as type_adapter_
 import serializer as serializer_
 import serializers
 import skirout/gepheum/skir_golden_tests/goldens
@@ -40,7 +39,7 @@ fn make_ev(value: a, ser: serializer_.Serializer(a)) -> EvaluatedValue {
         serializer_.from_json_code_with_options(
           ser,
           json,
-          keep_unrecognized_values: type_adapter_.Keep,
+          keep_unrecognized_values: True,
         )
       {
         Ok(v) -> Ok(make_ev(v, ser))
@@ -168,7 +167,7 @@ fn evaluate_typed_value(
       serializer_.from_json_code_with_options(
         goldens.point_serializer(),
         json,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromJsonKeepUnrecognized: " <> e })
@@ -184,7 +183,7 @@ fn evaluate_typed_value(
       serializer_.from_bytes_with_options(
         goldens.point_serializer(),
         bytes,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.point_serializer()) })
       |> result.map_error(fn(e) { "PointFromBytesKeepUnrecognized: " <> e })
@@ -200,7 +199,7 @@ fn evaluate_typed_value(
       serializer_.from_json_code_with_options(
         goldens.color_serializer(),
         json,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromJsonKeepUnrecognized: " <> e })
@@ -216,7 +215,7 @@ fn evaluate_typed_value(
       serializer_.from_bytes_with_options(
         goldens.color_serializer(),
         bytes,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.color_serializer()) })
       |> result.map_error(fn(e) { "ColorFromBytesKeepUnrecognized: " <> e })
@@ -232,7 +231,7 @@ fn evaluate_typed_value(
       serializer_.from_json_code_with_options(
         goldens.my_enum_serializer(),
         json,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromJsonKeepUnrecognized: " <> e })
@@ -248,7 +247,7 @@ fn evaluate_typed_value(
       serializer_.from_bytes_with_options(
         goldens.my_enum_serializer(),
         bytes,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.my_enum_serializer()) })
       |> result.map_error(fn(e) { "MyEnumFromBytesKeepUnrecognized: " <> e })
@@ -264,7 +263,7 @@ fn evaluate_typed_value(
       serializer_.from_json_code_with_options(
         goldens.enum_a_serializer(),
         json,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromJsonKeepUnrecognized: " <> e })
@@ -280,7 +279,7 @@ fn evaluate_typed_value(
       serializer_.from_bytes_with_options(
         goldens.enum_a_serializer(),
         bytes,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_a_serializer()) })
       |> result.map_error(fn(e) { "EnumAFromBytesKeepUnrecognized: " <> e })
@@ -296,7 +295,7 @@ fn evaluate_typed_value(
       serializer_.from_json_code_with_options(
         goldens.enum_b_serializer(),
         json,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromJsonKeepUnrecognized: " <> e })
@@ -312,7 +311,7 @@ fn evaluate_typed_value(
       serializer_.from_bytes_with_options(
         goldens.enum_b_serializer(),
         bytes,
-        keep_unrecognized_values: type_adapter_.Keep,
+        keep_unrecognized_values: True,
       )
       |> result.map(fn(v) { make_ev(v, goldens.enum_b_serializer()) })
       |> result.map_error(fn(e) { "EnumBFromBytesKeepUnrecognized: " <> e })
@@ -461,7 +460,7 @@ fn verify_reserialize_value(
             serializer_.from_bytes_with_options(
               goldens.point_serializer(),
               buf,
-              keep_unrecognized_values: type_adapter_.Drop,
+              keep_unrecognized_values: False,
             )
           {
             Error(e) ->
@@ -909,10 +908,7 @@ fn verify_enum_a_from_json_is_constant(
     serializer_.from_json_code_with_options(
       goldens.enum_a_serializer(),
       actual,
-      keep_unrecognized_values: case a.keep_unrecognized {
-        True -> type_adapter_.Keep
-        False -> type_adapter_.Drop
-      },
+      keep_unrecognized_values: a.keep_unrecognized,
     )
   {
     Error(e) -> Error("enum_a_from_json_is_constant parse error: " <> e)
@@ -937,10 +933,7 @@ fn verify_enum_a_from_bytes_is_constant(
     serializer_.from_bytes_with_options(
       goldens.enum_a_serializer(),
       actual,
-      keep_unrecognized_values: case a.keep_unrecognized {
-        True -> type_adapter_.Keep
-        False -> type_adapter_.Drop
-      },
+      keep_unrecognized_values: a.keep_unrecognized,
     )
   {
     Error(e) -> Error("enum_a_from_bytes_is_constant parse error: " <> e)
@@ -965,10 +958,7 @@ fn verify_enum_b_from_json_is_wrapper_b(
     serializer_.from_json_code_with_options(
       goldens.enum_b_serializer(),
       actual,
-      keep_unrecognized_values: case a.keep_unrecognized {
-        True -> type_adapter_.Keep
-        False -> type_adapter_.Drop
-      },
+      keep_unrecognized_values: a.keep_unrecognized,
     )
   {
     Error(e) -> Error("enum_b_from_json_is_wrapper_b parse error: " <> e)
@@ -995,10 +985,7 @@ fn verify_enum_b_from_bytes_is_wrapper_b(
     serializer_.from_bytes_with_options(
       goldens.enum_b_serializer(),
       actual,
-      keep_unrecognized_values: case a.keep_unrecognized {
-        True -> type_adapter_.Keep
-        False -> type_adapter_.Drop
-      },
+      keep_unrecognized_values: a.keep_unrecognized,
     )
   {
     Error(e) -> Error("enum_b_from_bytes_is_wrapper_b parse error: " <> e)

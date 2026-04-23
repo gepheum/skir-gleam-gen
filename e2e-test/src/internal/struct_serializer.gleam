@@ -73,7 +73,7 @@ pub type FieldAdapter(s) {
     number: Int,
     doc: String,
     is_default: fn(s) -> Bool,
-    to_json: fn(s, Bool) -> json.Json,
+    to_json: fn(s, type_adapter.JsonFlavor) -> json.Json,
     to_readable_json_code: fn(s, String) -> string_tree.StringTree,
     decode_json: fn(s, type_adapter.UnrecognizedValues) -> decode.Decoder(s),
     encode: fn(s, BytesTree) -> BytesTree,
@@ -328,10 +328,10 @@ fn struct_append_json(
   get_unrecognized: fn(s) -> UnrecognizedFields(s),
   recognized_slot_count: Int,
   s: s,
-  readable: Bool,
+  readable: type_adapter.JsonFlavor,
 ) -> json.Json {
   case readable {
-    False ->
+    type_adapter.Dense ->
       append_dense_json(
         fields,
         fields_reversed,
@@ -339,7 +339,7 @@ fn struct_append_json(
         recognized_slot_count,
         s,
       )
-    True -> append_readable_json(fields, s)
+    type_adapter.Readable -> append_readable_json(fields, s)
   }
 }
 
@@ -479,7 +479,7 @@ fn append_readable_json(fields: List(FieldAdapter(s)), s: s) -> json.Json {
     list.filter_map(fields, fn(f) {
       case f.is_default(s) {
         True -> Error(Nil)
-        False -> Ok(#(f.name, f.to_json(s, True)))
+        False -> Ok(#(f.name, f.to_json(s, type_adapter.Readable)))
       }
     })
   json.object(pairs)
@@ -512,7 +512,7 @@ fn append_json_slots(
     True -> list.reverse(acc)
     False -> {
       let #(value, next_fields) = case fields {
-        [f, ..rest] if f.number == i -> #(f.to_json(s, False), rest)
+        [f, ..rest] if f.number == i -> #(f.to_json(s, type_adapter.Dense), rest)
         _ -> #(json.int(0), fields)
       }
       append_json_slots(next_fields, s, i + 1, count, [value, ..acc])

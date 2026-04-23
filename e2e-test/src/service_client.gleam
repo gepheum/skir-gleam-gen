@@ -8,7 +8,6 @@ import gleam/result
 import gleam/string
 import gleam/uri
 import internal/method.{type Method}
-import internal/type_adapter.{Keep}
 import serializer
 
 // =============================================================================
@@ -166,7 +165,7 @@ pub fn invoke_remote(
           serializer.from_json_code_with_options(
             method.response_serializer,
             resp.body,
-            keep_unrecognized_values: Keep,
+            keep_unrecognized_values: True,
           )
           |> result.map_error(fn(e) {
             RpcError(

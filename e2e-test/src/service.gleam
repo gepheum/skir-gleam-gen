@@ -8,7 +8,6 @@ import gleam/result
 import gleam/string
 import internal/json_utils
 import internal/method.{type Method}
-import internal/type_adapter.{type UnrecognizedValues, Drop, Keep}
 import serializer
 import type_descriptor
 
@@ -67,16 +66,12 @@ fn make_erased_method(
     |> type_descriptor.type_descriptor_to_json()
 
   let invoke = fn(request_dynamic, keep_bool, readable, meta) {
-    let keep: UnrecognizedValues = case keep_bool {
-      True -> Keep
-      False -> Drop
-    }
     case
       decode.run(
         request_dynamic,
         serializer.json_decoder_with_options(
           method.request_serializer,
-          keep_unrecognized_values: keep,
+          keep_unrecognized_values: keep_bool,
         ),
       )
     {

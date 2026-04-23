@@ -74,7 +74,7 @@ pub type VariantAdapter(e) {
     constant: Option(e),
     /// JSON representation of this variant.
     /// The given enum value MUST be this variant.
-    to_json: fn(e, Bool) -> json.Json,
+    to_json: fn(e, type_adapter.JsonFlavor) -> json.Json,
     /// Readable JSON code representation of this variant.
     to_readable_json_code: fn(e, String) -> string_tree.StringTree,
     /// For wrapper variants: decodes the payload JSON into `e`.
@@ -116,8 +116,8 @@ pub fn constant_variant(
     constant: option.Some(instance),
     to_json: fn(_e, readable) {
       case readable {
-        False -> json.int(number)
-        True -> json.string(name)
+        type_adapter.Dense -> json.int(number)
+        type_adapter.Readable -> json.string(name)
       }
     },
     to_readable_json_code: fn(_e, _eol_indent) {
@@ -155,12 +155,12 @@ pub fn wrapper_variant(
       let ta = serializer_fn().internal_adapter
       let v = unwrap(e)
       case readable {
-        False ->
-          json.preprocessed_array([json.int(number), ta.to_json(v, False)])
-        True -> {
+        type_adapter.Dense ->
+          json.preprocessed_array([json.int(number), ta.to_json(v, type_adapter.Dense)])
+        type_adapter.Readable -> {
           json.object([
             #("kind", json.string(name)),
-            #("value", ta.to_json(v, True)),
+            #("value", ta.to_json(v, type_adapter.Readable)),
           ])
         }
       }
@@ -334,7 +334,7 @@ fn enum_append_json(
   get_kind_ordinal: fn(e) -> Int,
   get_unrecognized: fn(e) -> UnrecognizedVariant(e),
   e: e,
-  readable: Bool,
+  readable: type_adapter.JsonFlavor,
 ) -> json.Json {
   case get_kind_ordinal(e) {
     0 -> unknown_to_json(get_unrecognized(e), readable)
@@ -369,10 +369,13 @@ fn unknown_to_readable_json_code(
   json.to_string_tree(json.string("UNKNOWN"))
 }
 
-fn unknown_to_json(unrec: UnrecognizedVariant(e), readable: Bool) -> json.Json {
+fn unknown_to_json(
+  unrec: UnrecognizedVariant(e),
+  readable: type_adapter.JsonFlavor,
+) -> json.Json {
   case readable {
-    True -> json.string("UNKNOWN")
-    False ->
+    type_adapter.Readable -> json.string("UNKNOWN")
+    type_adapter.Dense ->
       case unrec {
         None -> json.int(0)
         Some(data) ->

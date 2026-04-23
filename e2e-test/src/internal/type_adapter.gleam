@@ -17,6 +17,12 @@ pub type UnrecognizedValues {
   Drop
 }
 
+/// Selects which JSON representation to produce.
+pub type JsonFlavor {
+  Dense
+  Readable
+}
+
 // =============================================================================
 // TypeAdapter
 // =============================================================================
@@ -26,7 +32,7 @@ pub type UnrecognizedValues {
 pub type TypeAdapter(a) {
   TypeAdapter(
     is_default: fn(a) -> Bool,
-    to_json: fn(a, Bool) -> json.Json,
+    to_json: fn(a, JsonFlavor) -> json.Json,
     to_readable_json_code: fn(a, String) -> string_tree.StringTree,
     decode_json: fn(UnrecognizedValues) -> decode.Decoder(a),
     encode: fn(a, BytesTree) -> BytesTree,

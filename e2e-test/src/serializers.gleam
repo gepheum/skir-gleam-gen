@@ -27,8 +27,8 @@ fn bool_adapter() -> type_adapter.TypeAdapter(Bool) {
     is_default: fn(v) { !v },
     to_json: fn(v, readable) {
       case readable {
-        True -> json.bool(v)
-        False ->
+        type_adapter.Readable -> json.bool(v)
+        type_adapter.Dense ->
           json.int(case v {
             True -> 1
             False -> 0
@@ -833,8 +833,8 @@ fn bytes_adapter() -> type_adapter.TypeAdapter(BitArray) {
     is_default: fn(v) { v == <<>> },
     to_json: fn(v, readable) {
       case readable {
-        True -> json.string("hex:" <> encode_hex(v))
-        False -> json.string(encode_base64(v))
+        type_adapter.Readable -> json.string("hex:" <> encode_hex(v))
+        type_adapter.Dense -> json.string(encode_base64(v))
       }
     },
     to_readable_json_code: fn(v, _eol_indent) {
@@ -941,8 +941,8 @@ fn timestamp_adapter() -> type_adapter.TypeAdapter(skir_timestamp.Timestamp) {
     to_json: fn(v: skir_timestamp.Timestamp, readable) {
       let ms = v.unix_millis
       case readable {
-        False -> json.int(ms)
-        True -> {
+        type_adapter.Dense -> json.int(ms)
+        type_adapter.Readable -> {
           let iso =
             gleam_timestamp.to_rfc3339(
               skir_timestamp.to_gleam_timestamp(v),
@@ -1093,8 +1093,8 @@ fn recursive_adapter(
       case v {
         recursive.Default ->
           case readable {
-            True -> json.object([])
-            False -> json.preprocessed_array([])
+            type_adapter.Readable -> json.object([])
+            type_adapter.Dense -> json.preprocessed_array([])
           }
         recursive.Some(x) -> item.to_json(x, readable)
       }
