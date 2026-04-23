@@ -33,15 +33,17 @@ type StateMessage {
 
 fn get_user(
   req: User,
+  _meta: Nil,
   state: State,
-) -> #(Result(UserProfile, ServiceError), State) {
+) -> #(Result(UserProfile, ServiceError), Nil, State) {
   case dict.get(state, req.user_id) {
-    Ok(profile) -> #(Ok(profile), state)
+    Ok(profile) -> #(Ok(profile), Nil, state)
     Error(_) -> #(
       Error(ServiceError(
         status_code: 404,
         message: "user not found: " <> int.to_string(req.user_id),
       )),
+      Nil,
       state,
     )
   }
@@ -49,17 +51,18 @@ fn get_user(
 
 fn add_user(
   req: UserProfile,
+  _meta: Nil,
   state: State,
-) -> #(Result(User, ServiceError), State) {
+) -> #(Result(User, ServiceError), Nil, State) {
   let new_state = dict.insert(state, req.user.user_id, req)
-  #(Ok(req.user), new_state)
+  #(Ok(req.user), Nil, new_state)
 }
 
 // ---------------------------------------------------------------------------
 // Service definition
 // ---------------------------------------------------------------------------
 
-fn build_service() -> Service(State) {
+fn build_service() -> Service(Nil, State) {
   service.new()
   |> service.add_method(user_out.get_user_method(), get_user)
   |> service.add_method(user_out.add_user_method(), add_user)
@@ -70,12 +73,12 @@ fn build_service() -> Service(State) {
 
 fn state_loop(
   subject: process.Subject(StateMessage),
-  svc: Service(State),
+  svc: Service(Nil, State),
   state: State,
 ) -> Nil {
   case process.receive_forever(subject) {
     HandleRpc(reply, input) -> {
-      let #(raw, new_state) = service.handle_request(svc, input, state)
+      let #(raw, _meta, new_state) = service.handle_request(svc, input, Nil, state)
       process.send(reply, raw)
       state_loop(subject, svc, new_state)
     }
