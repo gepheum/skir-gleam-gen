@@ -13,8 +13,9 @@ import gleam/string
 import gleam/string_tree
 import internal/decode_utils
 import internal/json_utils
+import internal/type_adapter
 import internal/unrecognized
-import serializer.{type UnrecognizedValues, Drop, Keep}
+import serializer
 import type_descriptor
 
 /// Stores unrecognized fields encountered while deserializing a struct of type
@@ -74,9 +75,9 @@ pub type FieldAdapter(s) {
     is_default: fn(s) -> Bool,
     to_json: fn(s, Bool) -> json.Json,
     to_readable_json_code: fn(s, String) -> string_tree.StringTree,
-    decode_json: fn(s, UnrecognizedValues) -> decode.Decoder(s),
+    decode_json: fn(s, type_adapter.UnrecognizedValues) -> decode.Decoder(s),
     encode: fn(s, BytesTree) -> BytesTree,
-    decode: fn(BitArray, s, UnrecognizedValues) ->
+    decode: fn(BitArray, s, type_adapter.UnrecognizedValues) ->
       Result(#(s, BitArray), String),
     type_descriptor: fn() -> type_descriptor.TypeDescriptor,
   )
@@ -169,11 +170,11 @@ pub fn skip_binary_slot(
 pub fn make_unrecognized_fields_json(
   extra_elements: List(dynamic.Dynamic),
   arr_len: Int,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> UnrecognizedFields(s) {
   case keep {
-    Drop -> None
-    Keep ->
+    type_adapter.Drop -> None
+    type_adapter.Keep ->
       case extra_elements {
         [] -> None
         _ -> {
@@ -203,15 +204,19 @@ pub fn new_serializer(
   recognized_slot_count recognized_slot_count: Int,
   decode_dense_json decode_dense_json: fn(
     List(dynamic.Dynamic),
-    UnrecognizedValues,
+    type_adapter.UnrecognizedValues,
   ) ->
     Result(s, List(decode.DecodeError)),
-  decode_binary decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
+  decode_binary decode_binary: fn(
+    BitArray,
+    Int,
+    type_adapter.UnrecognizedValues,
+  ) ->
     Result(#(s, BitArray), String),
 ) -> serializer.Serializer(s) {
   let fields_reversed = list.reverse(ordered_fields)
-  serializer.make_serializer(
-    serializer.make_type_adapter(
+  serializer.Serializer(
+    internal_adapter: type_adapter.TypeAdapter(
       is_default: fn(s) {
         struct_is_default(ordered_fields, get_unrecognized, s)
       },
@@ -378,11 +383,11 @@ fn struct_decode(
   _fields: List(FieldAdapter(s)),
   set_unrecognized: fn(s, UnrecognizedFields(s)) -> s,
   recognized_slot_count: Int,
-  decode_binary: fn(BitArray, Int, UnrecognizedValues) ->
+  decode_binary: fn(BitArray, Int, type_adapter.UnrecognizedValues) ->
     Result(#(s, BitArray), String),
   bits: BitArray,
   s: s,
-  keep_unrecognized: UnrecognizedValues,
+  keep_unrecognized: type_adapter.UnrecognizedValues,
 ) -> Result(#(s, BitArray), String) {
   case bits {
     <<wire, rest:bits>> ->
@@ -401,7 +406,7 @@ fn struct_decode(
                     True -> {
                       let extra = slot_count - recognized_slot_count
                       case keep_unrecognized {
-                        Keep ->
+                        type_adapter.Keep ->
                           capture_unrecognized_bytes(
                             set_unrecognized,
                             s2,
@@ -409,7 +414,7 @@ fn struct_decode(
                             extra,
                             rest3,
                           )
-                        Drop ->
+                        type_adapter.Drop ->
                           case decode_utils.skip_n_values(extra, rest3) {
                             Error(e) -> Error(e)
                             Ok(remaining) -> Ok(#(s2, remaining))
@@ -493,7 +498,7 @@ fn append_readable_json_tree(
         False -> Ok(#(f.name, f.to_readable_json_code(s, child_indent)))
       }
     })
-  serializer.readable_json_object(pairs, eol_indent)
+  json_utils.readable_json_object(pairs, eol_indent)
 }
 
 fn append_json_slots(
@@ -521,11 +526,11 @@ fn append_json_slots(
 
 fn struct_decode_json(
   fields: List(FieldAdapter(s)),
-  decode_dense_json: fn(List(dynamic.Dynamic), UnrecognizedValues) ->
+  decode_dense_json: fn(List(dynamic.Dynamic), type_adapter.UnrecognizedValues) ->
     Result(s, List(decode.DecodeError)),
   d: dynamic.Dynamic,
   s: s,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(s, String) {
   case decode.run(d, decode.list(decode.dynamic)) {
     Ok(arr) ->
@@ -608,7 +613,7 @@ fn from_readable_json(
   fields: List(FieldAdapter(s)),
   obj: dict.Dict(String, dynamic.Dynamic),
   s: s,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(s, String) {
   list.try_fold(fields, s, fn(acc, f) {
     case dict.get(obj, f.name) {

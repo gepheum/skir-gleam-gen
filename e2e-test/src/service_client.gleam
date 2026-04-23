@@ -8,7 +8,8 @@ import gleam/result
 import gleam/string
 import gleam/uri
 import internal/method.{type Method}
-import serializer.{Keep}
+import internal/type_adapter.{Keep}
+import serializer
 
 // =============================================================================
 // RpcError

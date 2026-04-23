@@ -1,68 +1,19 @@
 import gleam/bit_array
-import gleam/bytes_tree.{type BytesTree}
+import gleam/bytes_tree
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/json
-import gleam/list
 import gleam/result
 import gleam/string_tree
 import internal/json_utils
+import internal/type_adapter
 import type_descriptor.{type TypeDescriptor}
 
-// =============================================================================
-// UnrecognizedValues
-// =============================================================================
+pub type UnrecognizedValues =
+  type_adapter.UnrecognizedValues
 
-/// Controls whether unrecognized fields/variants encountered during
-/// deserialization are preserved for round-tripping.
-pub type UnrecognizedValues {
-  /// Preserve unrecognized fields/variants so they survive a round-trip.
-  Keep
-  /// Discard unrecognized fields/variants.
-  Drop
-}
-
-// =============================================================================
-// TypeAdapter
-// =============================================================================
-
-/// An internal adapter that provides the type-specific logic for serialization
-/// and deserialization. Used by `Serializer`.
-pub type TypeAdapter(a) {
-  TypeAdapter(
-    is_default: fn(a) -> Bool,
-    to_json: fn(a, Bool) -> json.Json,
-    to_readable_json_code: fn(a, String) -> string_tree.StringTree,
-    decode_json: fn(UnrecognizedValues) -> decode.Decoder(a),
-    encode: fn(a, BytesTree) -> BytesTree,
-    decode: fn(BitArray, UnrecognizedValues) -> Result(#(a, BitArray), String),
-    type_descriptor: fn() -> TypeDescriptor,
-  )
-}
-
-/// Constructs a `TypeAdapter` for type `a`.
-/// Used internally by the Skir client library and by generated code.
-pub fn make_type_adapter(
-  is_default is_default: fn(a) -> Bool,
-  to_json to_json: fn(a, Bool) -> json.Json,
-  to_readable_json_code to_readable_json_code: fn(a, String) ->
-    string_tree.StringTree,
-  decode_json decode_json: fn(UnrecognizedValues) -> decode.Decoder(a),
-  encode encode: fn(a, BytesTree) -> BytesTree,
-  decode decode: fn(BitArray, UnrecognizedValues) ->
-    Result(#(a, BitArray), String),
-  type_descriptor type_descriptor: fn() -> TypeDescriptor,
-) -> TypeAdapter(a) {
-  TypeAdapter(
-    is_default:,
-    to_json:,
-    to_readable_json_code:,
-    decode_json:,
-    encode:,
-    decode:,
-    type_descriptor:,
-  )
-}
+pub type TypeAdapter(a) =
+  type_adapter.TypeAdapter(a)
 
 // =============================================================================
 // Serializer
@@ -70,13 +21,12 @@ pub fn make_type_adapter(
 
 /// A value that can serialize and deserialize values of type `a` to/from JSON
 /// and binary formats.
+///
+/// You are generally not expected to construct this directly.
+/// Use the generated `*_serializer()` functions and library helpers in
+/// serializers.gleam.
 pub type Serializer(a) {
   Serializer(internal_adapter: TypeAdapter(a))
-}
-
-/// Constructs a `Serializer` from a `TypeAdapter`.
-pub fn make_serializer(adapter: TypeAdapter(a)) -> Serializer(a) {
-  Serializer(internal_adapter: adapter)
 }
 
 // =============================================================================
@@ -114,7 +64,7 @@ pub fn from_json_code(
   serializer: Serializer(a),
   json_code: String,
 ) -> Result(a, String) {
-  from_json_code_with_options(serializer, json_code, Drop)
+  from_json_code_with_options(serializer, json_code, type_adapter.Drop)
 }
 
 /// Deserializes a value from a JSON string.
@@ -137,7 +87,7 @@ pub fn from_json_code_with_options(
 
 /// Returns a JSON decoder for this serializer (Drop mode).
 pub fn json_decoder(serializer: Serializer(a)) -> decode.Decoder(a) {
-  json_decoder_with_options(serializer, Drop)
+  json_decoder_with_options(serializer, type_adapter.Drop)
 }
 
 /// Returns a JSON decoder for this serializer with configurable keep/drop mode.
@@ -162,7 +112,7 @@ pub fn from_bytes(
   serializer: Serializer(a),
   bytes: BitArray,
 ) -> Result(a, String) {
-  from_bytes_with_options(serializer, bytes, Drop)
+  from_bytes_with_options(serializer, bytes, type_adapter.Drop)
 }
 
 /// Deserializes a value from binary format.
@@ -191,59 +141,6 @@ pub fn from_bytes_with_options(
 /// Returns the TypeDescriptor for the type this serializer handles.
 pub fn type_descriptor(serializer: Serializer(a)) -> TypeDescriptor {
   serializer.internal_adapter.type_descriptor()
-}
-
-/// Builds readable JSON array code from already-rendered readable item trees.
-pub fn readable_json_array(
-  items: List(string_tree.StringTree),
-  eol_indent: String,
-) -> string_tree.StringTree {
-  case items {
-    [] -> string_tree.from_string("[]")
-    _ -> {
-      let child_indent = eol_indent <> "  "
-      let indented_items =
-        list.map(items, fn(item) {
-          string_tree.concat([
-            string_tree.from_string(child_indent),
-            item,
-          ])
-        })
-      string_tree.concat([
-        string_tree.from_string("["),
-        string_tree.join(indented_items, ","),
-        string_tree.from_string(eol_indent <> "]"),
-      ])
-    }
-  }
-}
-
-/// Builds readable JSON object code from key/value readable trees.
-pub fn readable_json_object(
-  fields: List(#(String, string_tree.StringTree)),
-  eol_indent: String,
-) -> string_tree.StringTree {
-  case fields {
-    [] -> string_tree.from_string("{}")
-    _ -> {
-      let child_indent = eol_indent <> "  "
-      let lines =
-        list.map(fields, fn(field) {
-          let #(name, value_tree) = field
-          string_tree.concat([
-            string_tree.from_string(child_indent),
-            json.to_string_tree(json.string(name)),
-            string_tree.from_string(": "),
-            value_tree,
-          ])
-        })
-      string_tree.concat([
-        string_tree.from_string("{"),
-        string_tree.join(lines, ","),
-        string_tree.from_string(eol_indent <> "}"),
-      ])
-    }
-  }
 }
 
 // =============================================================================

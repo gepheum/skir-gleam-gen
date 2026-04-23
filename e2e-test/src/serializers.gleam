@@ -11,11 +11,10 @@ import gleam/string
 import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp as gleam_timestamp
+import internal/json_utils
 import internal/recursive
-import serializer.{
-  type Serializer, type TypeAdapter, type UnrecognizedValues, make_serializer,
-  make_type_adapter, readable_json_array, readable_json_object,
-}
+import internal/type_adapter
+import serializer as serializer_
 import timestamp as skir_timestamp
 import type_descriptor
 
@@ -23,8 +22,8 @@ import type_descriptor
 // Primitive Serializers
 // =============================================================================
 
-fn bool_adapter() -> TypeAdapter(Bool) {
-  make_type_adapter(
+fn bool_adapter() -> type_adapter.TypeAdapter(Bool) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { !v },
     to_json: fn(v, readable) {
       case readable {
@@ -70,8 +69,8 @@ fn bool_adapter() -> TypeAdapter(Bool) {
 }
 
 /// Returns the serializer for Bool values.
-pub fn bool_serializer() -> Serializer(Bool) {
-  make_serializer(bool_adapter())
+pub fn bool_serializer() -> serializer_.Serializer(Bool) {
+  serializer_.Serializer(internal_adapter: bool_adapter())
 }
 
 // -----------------------------------------------------------------------------
@@ -178,8 +177,8 @@ fn int32_from_json_str(s: String) -> Int {
   }
 }
 
-fn int32_adapter() -> TypeAdapter(Int) {
-  make_type_adapter(
+fn int32_adapter() -> type_adapter.TypeAdapter(Int) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == 0 },
     to_json: fn(v, _) { json.int(v) },
     to_readable_json_code: fn(v, _eol_indent) {
@@ -205,8 +204,8 @@ fn int32_adapter() -> TypeAdapter(Int) {
 }
 
 /// Returns the serializer for Int (int32) values.
-pub fn int32_serializer() -> Serializer(Int) {
-  make_serializer(int32_adapter())
+pub fn int32_serializer() -> serializer_.Serializer(Int) {
+  serializer_.Serializer(internal_adapter: int32_adapter())
 }
 
 // -----------------------------------------------------------------------------
@@ -217,7 +216,7 @@ pub fn int32_serializer() -> Serializer(Int) {
 
 const max_safe_int64_json: Int = 9_007_199_254_740_991
 
-fn int64_adapter() -> TypeAdapter(Int) {
+fn int64_adapter() -> type_adapter.TypeAdapter(Int) {
   let parse_string = fn(s) {
     case int.parse(s) {
       Ok(n) -> n
@@ -228,7 +227,7 @@ fn int64_adapter() -> TypeAdapter(Int) {
         }
     }
   }
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == 0 },
     to_json: fn(v, _) {
       case v >= -max_safe_int64_json && v <= max_safe_int64_json {
@@ -273,8 +272,8 @@ fn encode_i64(v: Int) -> BitArray {
 }
 
 /// Returns the serializer for Int (int64) values.
-pub fn int64_serializer() -> Serializer(Int) {
-  make_serializer(int64_adapter())
+pub fn int64_serializer() -> serializer_.Serializer(Int) {
+  serializer_.Serializer(internal_adapter: int64_adapter())
 }
 
 // -----------------------------------------------------------------------------
@@ -286,7 +285,7 @@ pub fn int64_serializer() -> Serializer(Int) {
 
 const max_safe_hash64_json: Int = 9_007_199_254_740_991
 
-fn hash64_adapter() -> TypeAdapter(Int) {
+fn hash64_adapter() -> type_adapter.TypeAdapter(Int) {
   let parse_string = fn(s) {
     case int.parse(s) {
       Ok(n) -> n
@@ -297,7 +296,7 @@ fn hash64_adapter() -> TypeAdapter(Int) {
         }
     }
   }
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == 0 },
     to_json: fn(v, _) {
       case v <= max_safe_hash64_json {
@@ -346,8 +345,8 @@ fn encode_uint64(v: Int) -> BitArray {
 }
 
 /// Returns the serializer for Int (hash64) values.
-pub fn hash64_serializer() -> Serializer(Int) {
-  make_serializer(hash64_adapter())
+pub fn hash64_serializer() -> serializer_.Serializer(Int) {
+  serializer_.Serializer(internal_adapter: hash64_adapter())
 }
 
 // ---------------------------------------------------------------------------
@@ -401,8 +400,8 @@ fn float_decode_json() -> decode.Decoder(Float) {
   ])
 }
 
-fn float32_adapter() -> TypeAdapter(Float) {
-  make_type_adapter(
+fn float32_adapter() -> type_adapter.TypeAdapter(Float) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == 0.0 },
     to_json: fn(v, _) {
       let s = float_to_json_str(v)
@@ -453,12 +452,12 @@ fn float32_adapter() -> TypeAdapter(Float) {
 }
 
 /// Returns the serializer for Float (float32) values.
-pub fn float32_serializer() -> Serializer(Float) {
-  make_serializer(float32_adapter())
+pub fn float32_serializer() -> serializer_.Serializer(Float) {
+  serializer_.Serializer(internal_adapter: float32_adapter())
 }
 
-fn float64_adapter() -> TypeAdapter(Float) {
-  make_type_adapter(
+fn float64_adapter() -> type_adapter.TypeAdapter(Float) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == 0.0 },
     to_json: fn(v, _) {
       let s = float_to_json_str(v)
@@ -511,8 +510,8 @@ fn float64_adapter() -> TypeAdapter(Float) {
 }
 
 /// Returns the serializer for Float (float64) values.
-pub fn float64_serializer() -> Serializer(Float) {
-  make_serializer(float64_adapter())
+pub fn float64_serializer() -> serializer_.Serializer(Float) {
+  serializer_.Serializer(internal_adapter: float64_adapter())
 }
 
 // ---------------------------------------------------------------------------
@@ -757,8 +756,8 @@ fn hex_char_to_int(c: Int) -> Result(Int, String) {
 // String adapter
 // ---------------------------------------------------------------------------
 
-fn string_adapter() -> TypeAdapter(String) {
-  make_type_adapter(
+fn string_adapter() -> type_adapter.TypeAdapter(String) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == "" },
     to_json: fn(v, _) { json.string(v) },
     to_readable_json_code: fn(v, _eol_indent) {
@@ -821,16 +820,16 @@ fn string_adapter() -> TypeAdapter(String) {
 }
 
 /// Returns the serializer for String values.
-pub fn string_serializer() -> Serializer(String) {
-  make_serializer(string_adapter())
+pub fn string_serializer() -> serializer_.Serializer(String) {
+  serializer_.Serializer(internal_adapter: string_adapter())
 }
 
 // ---------------------------------------------------------------------------
 // Bytes adapter
 // ---------------------------------------------------------------------------
 
-fn bytes_adapter() -> TypeAdapter(BitArray) {
-  make_type_adapter(
+fn bytes_adapter() -> type_adapter.TypeAdapter(BitArray) {
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == <<>> },
     to_json: fn(v, readable) {
       case readable {
@@ -906,8 +905,8 @@ fn bytes_adapter() -> TypeAdapter(BitArray) {
 }
 
 /// Returns the serializer for BitArray (bytes) values.
-pub fn bytes_serializer() -> Serializer(BitArray) {
-  make_serializer(bytes_adapter())
+pub fn bytes_serializer() -> serializer_.Serializer(BitArray) {
+  serializer_.Serializer(internal_adapter: bytes_adapter())
 }
 
 // ---------------------------------------------------------------------------
@@ -926,7 +925,7 @@ fn encode_timestamp(ms: Int) -> BitArray {
   }
 }
 
-fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
+fn timestamp_adapter() -> type_adapter.TypeAdapter(skir_timestamp.Timestamp) {
   let parse_millis_string = fn(s) {
     case int.parse(s) {
       Ok(n) -> n
@@ -937,7 +936,7 @@ fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
         }
     }
   }
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v: skir_timestamp.Timestamp) { v.unix_millis == 0 },
     to_json: fn(v: skir_timestamp.Timestamp, readable) {
       let ms = v.unix_millis
@@ -963,7 +962,7 @@ fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
           skir_timestamp.to_gleam_timestamp(v),
           calendar.utc_offset,
         )
-      readable_json_object(
+      json_utils.readable_json_object(
         [
           #("unix_millis", json.to_string_tree(json.int(ms))),
           #("formatted", json.to_string_tree(json.string(iso))),
@@ -1015,17 +1014,21 @@ fn timestamp_adapter() -> TypeAdapter(skir_timestamp.Timestamp) {
 }
 
 /// Returns the serializer for Timestamp values.
-pub fn timestamp_serializer() -> Serializer(skir_timestamp.Timestamp) {
-  make_serializer(timestamp_adapter())
+pub fn timestamp_serializer() -> serializer_.Serializer(
+  skir_timestamp.Timestamp,
+) {
+  serializer_.Serializer(internal_adapter: timestamp_adapter())
 }
 
 // =============================================================================
 // Composite Serializers
 // =============================================================================
 
-fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
+fn optional_adapter(
+  item_serializer: serializer_.Serializer(a),
+) -> type_adapter.TypeAdapter(Option(a)) {
   let item = item_serializer.internal_adapter
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == None },
     to_json: fn(v, readable) {
       case v {
@@ -1070,16 +1073,16 @@ fn optional_adapter(item_serializer: Serializer(a)) -> TypeAdapter(Option(a)) {
 
 /// Returns a serializer for Option(a) values.
 pub fn optional_serializer(
-  item_serializer: Serializer(a),
-) -> Serializer(Option(a)) {
-  make_serializer(optional_adapter(item_serializer))
+  item_serializer: serializer_.Serializer(a),
+) -> serializer_.Serializer(Option(a)) {
+  serializer_.Serializer(internal_adapter: optional_adapter(item_serializer))
 }
 
 fn recursive_adapter(
-  item_serializer: Serializer(a),
-) -> TypeAdapter(recursive.Recursive(a)) {
+  item_serializer: serializer_.Serializer(a),
+) -> type_adapter.TypeAdapter(recursive.Recursive(a)) {
   let item = item_serializer.internal_adapter
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v) {
       case v {
         recursive.Default -> True
@@ -1126,17 +1129,17 @@ fn recursive_adapter(
 
 /// Returns a serializer for Recursive(a) values.
 pub fn recursive_serializer(
-  item_serializer: Serializer(a),
-) -> Serializer(recursive.Recursive(a)) {
-  make_serializer(recursive_adapter(item_serializer))
+  item_serializer: serializer_.Serializer(a),
+) -> serializer_.Serializer(recursive.Recursive(a)) {
+  serializer_.Serializer(internal_adapter: recursive_adapter(item_serializer))
 }
 
 fn list_adapter(
-  item_serializer: Serializer(a),
+  item_serializer: serializer_.Serializer(a),
   key_extractor: String,
-) -> TypeAdapter(List(a)) {
+) -> type_adapter.TypeAdapter(List(a)) {
   let item = item_serializer.internal_adapter
-  make_type_adapter(
+  type_adapter.TypeAdapter(
     is_default: fn(v) { v == [] },
     to_json: fn(v, readable) {
       json.array(v, fn(item_val) { item.to_json(item_val, readable) })
@@ -1182,15 +1185,20 @@ fn list_adapter(
 }
 
 /// Returns a serializer for List(a) values.
-pub fn list_serializer(item_serializer: Serializer(a)) -> Serializer(List(a)) {
+pub fn list_serializer(
+  item_serializer: serializer_.Serializer(a),
+) -> serializer_.Serializer(List(a)) {
   keyed_list_serializer(item_serializer, "")
 }
 
 pub fn keyed_list_serializer(
-  item_serializer: Serializer(a),
+  item_serializer: serializer_.Serializer(a),
   key_extractor: String,
-) -> Serializer(List(a)) {
-  make_serializer(list_adapter(item_serializer, key_extractor))
+) -> serializer_.Serializer(List(a)) {
+  serializer_.Serializer(internal_adapter: list_adapter(
+    item_serializer,
+    key_extractor,
+  ))
 }
 
 // =============================================================================
@@ -1258,11 +1266,35 @@ fn decode_list_count(bits: BitArray) -> Result(#(Int, BitArray), String) {
   }
 }
 
+fn readable_json_array(
+  items: List(string_tree.StringTree),
+  eol_indent: String,
+) -> string_tree.StringTree {
+  case items {
+    [] -> string_tree.from_string("[]")
+    _ -> {
+      let child_indent = eol_indent <> "  "
+      let indented_items =
+        list.map(items, fn(item) {
+          string_tree.concat([
+            string_tree.from_string(child_indent),
+            item,
+          ])
+        })
+      string_tree.concat([
+        string_tree.from_string("["),
+        string_tree.join(indented_items, ","),
+        string_tree.from_string(eol_indent <> "]"),
+      ])
+    }
+  }
+}
+
 fn decode_list_items(
-  item: TypeAdapter(a),
+  item: type_adapter.TypeAdapter(a),
   count: Int,
   bits: BitArray,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
   acc: List(a),
 ) -> Result(#(List(a), BitArray), String) {
   case count {

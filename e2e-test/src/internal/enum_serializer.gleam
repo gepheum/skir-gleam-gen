@@ -13,8 +13,9 @@ import gleam/string
 import gleam/string_tree
 import internal/decode_utils
 import internal/json_utils
+import internal/type_adapter
 import internal/unrecognized
-import serializer.{type UnrecognizedValues, Drop, Keep}
+import serializer
 import type_descriptor
 
 /// Stores an unrecognized variant encountered while deserializing an enum of
@@ -78,13 +79,13 @@ pub type VariantAdapter(e) {
     to_readable_json_code: fn(e, String) -> string_tree.StringTree,
     /// For wrapper variants: decodes the payload JSON into `e`.
     /// For constant variants: returns `Ok(instance)` unconditionally.
-    wrap_from_json: fn(UnrecognizedValues) -> decode.Decoder(e),
+    wrap_from_json: fn(type_adapter.UnrecognizedValues) -> decode.Decoder(e),
     /// For wrapper variants: encodes the payload onto the tree.
     /// For constant variants: returns the tree unchanged.
     encode_payload: fn(e, BytesTree) -> BytesTree,
     /// For wrapper variants: decodes the payload from binary (header already consumed).
     /// For constant variants: returns `Ok(#(instance, bits))` unconditionally.
-    wrap_decode: fn(BitArray, UnrecognizedValues) ->
+    wrap_decode: fn(BitArray, type_adapter.UnrecognizedValues) ->
       Result(#(e, BitArray), String),
     /// For wrapper variants: returns `Some(default_value)` via the inner
     /// serializer's zero default (used when a wrapper number appears in a
@@ -168,7 +169,7 @@ pub fn wrapper_variant(
       let ta = serializer_fn().internal_adapter
       let v = unwrap(e)
       let child_indent = eol_indent <> "  "
-      serializer.readable_json_object(
+      json_utils.readable_json_object(
         [
           #("kind", json.to_string_tree(json.string(name))),
           #("value", ta.to_readable_json_code(v, child_indent)),
@@ -193,7 +194,7 @@ pub fn wrapper_variant(
     },
     wrap_default: fn() {
       let ta = serializer_fn().internal_adapter
-      case ta.decode(<<0>>, Drop) {
+      case ta.decode(<<0>>, type_adapter.Drop) {
         Ok(#(v, _)) -> option.Some(wrap(v))
         Error(_) -> option.None
       }
@@ -249,8 +250,8 @@ pub fn new_serializer(
     list.fold(variants, dict.new(), fn(acc, v) {
       dict.insert(acc, string.lowercase(v.name), v)
     })
-  serializer.make_serializer(
-    serializer.make_type_adapter(
+  serializer.Serializer(
+    internal_adapter: type_adapter.TypeAdapter(
       is_default: fn(e) {
         case get_kind_ordinal(e) {
           0 ->
@@ -481,7 +482,7 @@ fn enum_decode_json(
   unknown_default: e,
   wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   d: dynamic.Dynamic,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(e, String) {
   // Try as integer: constant variant by number (dense JSON).
   case decode.run(d, decode.int) {
@@ -550,8 +551,8 @@ fn enum_decode_json(
                           case dict.get(variants_by_number, n) {
                             Error(_) ->
                               case keep {
-                                Drop -> Ok(unknown_default)
-                                Keep -> {
+                                type_adapter.Drop -> Ok(unknown_default)
+                                type_adapter.Keep -> {
                                   // Store as unrecognized: reconstruct JSON array
                                   let json_bytes =
                                     bit_array.from_string(
@@ -651,7 +652,7 @@ fn resolve_constant_number_keep(
   removed_numbers: List(Int),
   unknown_default: e,
   wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(e, String) {
   case list.contains(removed_numbers, number) {
     True -> Ok(unknown_default)
@@ -664,8 +665,8 @@ fn resolve_constant_number_keep(
           }
         Error(_) ->
           case keep {
-            Drop -> Ok(unknown_default)
-            Keep -> {
+            type_adapter.Drop -> Ok(unknown_default)
+            type_adapter.Keep -> {
               let json_bytes = bit_array.from_string(int.to_string(number))
               Ok(
                 wrap_unrecognized(
@@ -743,7 +744,7 @@ fn enum_decode_binary(
   unknown_default: e,
   wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   bits: BitArray,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(#(e, BitArray), String) {
   case bits {
     <<wire, rest:bits>> ->
@@ -816,7 +817,7 @@ fn resolve_constant_number_bin(
   removed_numbers: List(Int),
   unknown_default: e,
   wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
   raw_bits: BitArray,
 ) -> e {
   case list.contains(removed_numbers, number) {
@@ -825,8 +826,8 @@ fn resolve_constant_number_bin(
       case dict.get(variants_by_number, number) {
         Error(_) ->
           case keep {
-            Drop -> unknown_default
-            Keep -> {
+            type_adapter.Drop -> unknown_default
+            type_adapter.Keep -> {
               let ud = variant_data_from_bytes(number, raw_bits)
               wrap_unrecognized(Some(ud))
             }
@@ -849,7 +850,7 @@ fn decode_wrapper_number(
   unknown_default: e,
   wrap_unrecognized: fn(UnrecognizedVariant(e)) -> e,
   bits: BitArray,
-  keep: UnrecognizedValues,
+  keep: type_adapter.UnrecognizedValues,
 ) -> Result(#(e, BitArray), String) {
   case list.contains(removed_numbers, number) {
     True ->
@@ -863,12 +864,12 @@ fn decode_wrapper_number(
         Error(_) ->
           // Unrecognized wrapper variant.
           case keep {
-            Drop ->
+            type_adapter.Drop ->
               case decode_utils.skip_value(bits) {
                 Error(e) -> Error(e)
                 Ok(rest) -> Ok(#(unknown_default, rest))
               }
-            Keep -> {
+            type_adapter.Keep -> {
               let header = encode_wrapper_header(number)
               let before_size = bit_array.byte_size(bits)
               case decode_utils.skip_value(bits) {
