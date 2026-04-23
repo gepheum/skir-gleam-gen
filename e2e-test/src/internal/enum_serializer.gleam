@@ -156,7 +156,10 @@ pub fn wrapper_variant(
       let v = unwrap(e)
       case readable {
         type_adapter.Dense ->
-          json.preprocessed_array([json.int(number), ta.to_json(v, type_adapter.Dense)])
+          json.preprocessed_array([
+            json.int(number),
+            ta.to_json(v, type_adapter.Dense),
+          ])
         type_adapter.Readable -> {
           json.object([
             #("kind", json.string(name)),

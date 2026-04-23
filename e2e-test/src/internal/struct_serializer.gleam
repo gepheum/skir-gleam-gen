@@ -512,7 +512,10 @@ fn append_json_slots(
     True -> list.reverse(acc)
     False -> {
       let #(value, next_fields) = case fields {
-        [f, ..rest] if f.number == i -> #(f.to_json(s, type_adapter.Dense), rest)
+        [f, ..rest] if f.number == i -> #(
+          f.to_json(s, type_adapter.Dense),
+          rest,
+        )
         _ -> #(json.int(0), fields)
       }
       append_json_slots(next_fields, s, i + 1, count, [value, ..acc])

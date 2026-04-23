@@ -80,10 +80,7 @@ pub fn from_json_code_with_options(
 ) -> Result(a, String) {
   let keep = bool_to_keep_unrecognized_values(keep_unrecognized_values)
   use d <- result.try(parse_json_code_to_dynamic(json_code))
-  decode.run(
-    d,
-    serializer.internal_adapter.decode_json(keep),
-  )
+  decode.run(d, serializer.internal_adapter.decode_json(keep))
   |> result.map_error(json_utils.decode_errors_to_string)
 }
 
