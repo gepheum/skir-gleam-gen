@@ -8,8 +8,8 @@ import gleam/result
 import gleam/string
 import internal/json_utils
 import internal/method.{type Method}
-import serializer
 import internal/type_adapter.{type UnrecognizedValues, Drop, Keep}
+import serializer
 import type_descriptor
 
 // Studio JS CDN URL — override with set_studio_app_js_url if needed.
