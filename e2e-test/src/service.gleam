@@ -86,16 +86,13 @@ pub type RawResponse {
 // =============================================================================
 
 /// Context passed to service hooks when a method returns an error.
-///
-/// `request_meta` is the per-request metadata you passed into
-/// `handle_request` (for example: headers, auth context, request id).
-/// `state` is the current application state for that invocation.
 pub type ServiceErrorInfo(req_meta, state) {
   ErrorInfo(
     error: ServiceError,
     message: String,
     method_name: String,
-    request_meta: req_meta,
+    req_meta: req_meta,
+    /// Application state
     state: state,
   )
 }
@@ -195,9 +192,9 @@ fn make_erased_method(
 /// Dispatches RPC requests to registered methods.
 ///
 /// Type parameters:
-/// - `req_meta`: per-request metadata supplied by your HTTP handler.
+/// - `req_meta`: per-request metadata supplied by your HTTP handler
 /// - `state`: application state
-/// - `message`: application state update, returned by `handle_request`.
+/// - `message`: application state update, will be returned by `handle_request`
 ///
 /// Example setup:
 /// ```gleam
@@ -227,12 +224,12 @@ pub opaque type Service(req_meta, state, message) {
 /// Creates a new service.
 ///
 /// Default behavior:
-/// - unrecognized request values are dropped.
+/// - unrecognized values when deserializing requests are dropped.
 /// - unknown error messages are not exposed to clients.
-/// - errors are ignored by the default logger.
+/// - errors are not logged.
 ///
 /// `empty_message` is returned by `handle_request` when no method-produced
-/// message is available (for example `"list"`, `"studio"`, malformed input,
+/// message is available (for example `"list"`, `"studio"`, malformed input
 /// or unknown method).
 pub fn new(
   empty_message empty_message: message,
@@ -252,9 +249,10 @@ pub fn new(
 ///
 /// Your `handler` receives the deserialized request, request metadata, and
 /// application state, and returns:
-/// - `Ok(response)` for success.
-/// - `Error(ServiceError(...))` for controlled HTTP errors.
-/// - message for updating the application state.
+/// - `Ok(response)` for success
+/// - `Error(ServiceError(...))` for controlled HTTP errors
+/// - a message which will be returned by `handle_request` and can be used to
+///     update the application state.
 pub fn add_method(
   service: Service(req_meta, state, message),
   method: Method(req, resp),
@@ -271,7 +269,8 @@ pub fn add_method(
 
 /// Controls whether unknown request fields are preserved while decoding.
 ///
-/// Keep this disabled unless your use case requires it.
+/// Only enable this for data from trusted sources. Malicious actors could
+/// inject fields with IDs not yet defined in your schema.
 pub fn set_keep_unrecognized_values(
   service: Service(req_meta, state, message),
   keep: Bool,
@@ -282,7 +281,7 @@ pub fn set_keep_unrecognized_values(
 /// Decides whether unknown internal error messages may be sent to clients.
 ///
 /// The safe default is `False`. Expose messages only when you are sure they do
-/// not leak sensitive details.
+/// not leak sensitive information.
 pub fn set_can_send_unknown_error_message(
   service: Service(req_meta, state, message),
   can_send: fn(ServiceErrorInfo(req_meta, state)) -> Bool,
@@ -291,8 +290,7 @@ pub fn set_can_send_unknown_error_message(
 }
 
 /// Sets a callback invoked whenever a method returns an error.
-///
-/// Use this for monitoring and debugging.
+/// for logging the error.
 pub fn set_error_logger(
   service: Service(req_meta, state, message),
   logger: fn(ServiceErrorInfo(req_meta, state)) -> Nil,
@@ -314,19 +312,11 @@ pub fn set_studio_app_js_url(
 
 /// Handles one incoming request body and returns `(raw_response, message)`.
 ///
-/// Accepted built-ins:
-/// - `""` or `"studio"`: serves the studio HTML.
-/// - `"list"`: returns service method metadata.
+/// The value passed to `body` must depend on the request type:
+/// - For POST requests, pass the raw request body text.
+/// - For GET requests, pass the decoded query payload.
 ///
-/// In a typical HTTP server:
-/// - for POST requests, pass the raw body text.
-/// - for GET requests, pass the decoded query input (as shown in
-///   `start_service.gleam`).
-///
-/// For normal RPC calls, this dispatches to the registered method and returns
-/// that method's updated metadata/message.
-///
-/// Example (adapted from `start_service.gleam`):
+/// Example:
 /// ```gleam
 /// let #(raw, message) =
 ///   service.handle_request(svc, input, Nil, state)
@@ -475,7 +465,7 @@ fn invoke_entry(
             error: UnknownError(message: msg),
             message: msg,
             method_name: entry.name,
-            request_meta: req_meta,
+            req_meta: req_meta,
             state: state,
           ))
         {
