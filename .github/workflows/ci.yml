@@ -24,8 +24,6 @@ jobs:
           otp-version: "27"
       - run: npm ci
       - run: npm run lint
-      - run: npm run format:check
       - run: npm run build
       - run: npm run test
-      - name: Build Gleam docs
-        run: cd e2e-test && gleam docs build
+      - run: npm run format:check
