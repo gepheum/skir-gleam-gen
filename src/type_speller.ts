@@ -126,7 +126,7 @@ export class TypeSpeller {
     if (field.isRecursive !== "hard") {
       return this.getGleamType(type);
     }
-    this.neededModules.add("internal/recursive");
+    this.neededModules.add("recursive");
     return `recursive_.Recursive(${this.getGleamType(type)})`;
   }
 
@@ -155,7 +155,7 @@ export class TypeSpeller {
     if (field.isRecursive !== "hard") {
       return this.getDefaultExpression(type);
     }
-    this.neededModules.add("internal/recursive");
+    this.neededModules.add("recursive");
     return "recursive_.Default";
   }
 

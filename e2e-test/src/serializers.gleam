@@ -12,8 +12,8 @@ import gleam/string_tree
 import gleam/time/calendar
 import gleam/time/timestamp as gleam_timestamp
 import internal/json_utils
-import internal/recursive
 import internal/type_adapter
+import recursive
 import serializer as serializer_
 import timestamp as skir_timestamp
 import type_descriptor

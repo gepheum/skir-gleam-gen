@@ -231,7 +231,7 @@ const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
   ["gleam/dynamic/decode", "decode_"],
   ["timestamp", "timestamp_"],
-  ["internal/recursive", "recursive_"],
+  ["recursive", "recursive_"],
   ["internal/method", "method_"],
   ["serializer", "serializer_"],
   ["serializers", "serializers_"],
