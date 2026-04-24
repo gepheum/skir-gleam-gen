@@ -19,7 +19,7 @@ pub type TypeAdapter(a) =
 /// A value that can serialize and deserialize values of type `a` to/from JSON
 /// and binary formats.
 ///
-/// You are generally not expected to construct this directly.
+/// Do not construct this directly.
 /// Use the generated `*_serializer()` functions and library helpers in
 /// serializers.gleam.
 pub type Serializer(a) {
@@ -99,8 +99,6 @@ pub fn json_decoder_with_options(
 }
 
 /// Serializes a value to a compact binary format.
-/// The binary format uses the `"skir"` magic prefix followed by the encoded
-/// payload produced by the adapter.
 pub fn to_bytes(serializer: Serializer(a), value: a) -> BitArray {
   bytes_tree.from_string("skir")
   |> serializer.internal_adapter.encode(value, _)
