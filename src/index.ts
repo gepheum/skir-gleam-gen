@@ -3,6 +3,7 @@
 // TODO: look at public symbols
 // TODO: review everything
 // TODO: look at generated comments
+// Zig: look at the ?list endpoint
 // TODO: add comments to the library, in particular around Service
 
 import {

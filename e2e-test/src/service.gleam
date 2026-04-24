@@ -80,6 +80,19 @@ pub type RawResponse {
 }
 
 // =============================================================================
+// ErrorInfo
+// =============================================================================
+
+pub type ServiceErrorInfo(meta) {
+  ErrorInfo(
+    error: ServiceError,
+    message: String,
+    method_name: String,
+    request_meta: meta,
+  )
+}
+
+// =============================================================================
 // Internal: type-erased method
 // =============================================================================
 
@@ -168,8 +181,8 @@ fn make_erased_method(
 pub opaque type Service(meta, state) {
   Service(
     keep_unrecognized: Bool,
-    can_send_unknown_error_message: fn(meta) -> Bool,
-    error_logger: fn(String) -> Nil,
+    can_send_unknown_error_message: fn(ServiceErrorInfo(meta)) -> Bool,
+    error_logger: fn(ServiceErrorInfo(meta)) -> Nil,
     studio_url: String,
     by_number: Dict(Int, ErasedMethod(meta, state)),
     by_name: Dict(String, ErasedMethod(meta, state)),
@@ -183,8 +196,8 @@ pub opaque type Service(meta, state) {
 pub fn new() -> Service(meta, state) {
   Service(
     keep_unrecognized: False,
-    can_send_unknown_error_message: fn(_meta) { False },
-    error_logger: log_to_stderr,
+    can_send_unknown_error_message: fn(_info) { False },
+    error_logger: noop_error_logger,
     studio_url: default_studio_url,
     by_number: dict.new(),
     by_name: dict.new(),
@@ -213,14 +226,14 @@ pub fn set_keep_unrecognized_values(
 
 pub fn set_can_send_unknown_error_message(
   service: Service(meta, state),
-  can_send: fn(meta) -> Bool,
+  can_send: fn(ServiceErrorInfo(meta)) -> Bool,
 ) -> Service(meta, state) {
   Service(..service, can_send_unknown_error_message: can_send)
 }
 
 pub fn set_error_logger(
   service: Service(meta, state),
-  logger: fn(String) -> Nil,
+  logger: fn(ServiceErrorInfo(meta)) -> Nil,
 ) -> Service(meta, state) {
   Service(..service, error_logger: logger)
 }
@@ -374,7 +387,14 @@ fn invoke_entry(
       RawResponse(
         status_code: 500,
         content_type: "text/plain",
-        data: case service.can_send_unknown_error_message(meta) {
+        data: case
+          service.can_send_unknown_error_message(ErrorInfo(
+            error: UnknownError(message: msg),
+            message: msg,
+            method_name: entry.name,
+            request_meta: meta,
+          ))
+        {
           True -> "server error: " <> msg
           False -> "server error"
         },
@@ -572,9 +592,7 @@ fn error_status_to_http_code(status: HttpErrorCode) -> Int {
 // Private: default error logger (no-op)
 // =============================================================================
 
-// The default logger does nothing; callers should override it via
-// set_error_logger if they want error reporting.
-fn log_to_stderr(_message: String) -> Nil {
+fn noop_error_logger(_info: ServiceErrorInfo(meta)) -> Nil {
   Nil
 }
 
