@@ -118,8 +118,10 @@ fn evaluate_typed_value(
   case tv {
     goldens.TypedValueUnknown(_) -> Error("unknown TypedValue variant")
     goldens.TypedValueBool(v) -> Ok(make_ev(v, skir_client_.bool_serializer()))
-    goldens.TypedValueInt32(v) -> Ok(make_ev(v, skir_client_.int32_serializer()))
-    goldens.TypedValueInt64(v) -> Ok(make_ev(v, skir_client_.int64_serializer()))
+    goldens.TypedValueInt32(v) ->
+      Ok(make_ev(v, skir_client_.int32_serializer()))
+    goldens.TypedValueInt64(v) ->
+      Ok(make_ev(v, skir_client_.int64_serializer()))
     goldens.TypedValueHash64(v) ->
       Ok(make_ev(v, skir_client_.hash64_serializer()))
     goldens.TypedValueFloat32(v) ->
@@ -130,14 +132,18 @@ fn evaluate_typed_value(
       Ok(make_ev(v, skir_client_.timestamp_serializer()))
     goldens.TypedValueString(v) ->
       Ok(make_ev(v, skir_client_.string_serializer()))
-    goldens.TypedValueBytes(v) -> Ok(make_ev(v, skir_client_.bytes_serializer()))
+    goldens.TypedValueBytes(v) ->
+      Ok(make_ev(v, skir_client_.bytes_serializer()))
     goldens.TypedValueBoolOptional(v) ->
       Ok(make_ev(
         v,
         skir_client_.optional_serializer(skir_client_.bool_serializer()),
       ))
     goldens.TypedValueInts(v) ->
-      Ok(make_ev(v, skir_client_.list_serializer(skir_client_.int32_serializer())))
+      Ok(make_ev(
+        v,
+        skir_client_.list_serializer(skir_client_.int32_serializer()),
+      ))
     goldens.TypedValuePoint(v) -> Ok(make_ev(v, goldens.point_serializer()))
     goldens.TypedValueColor(v) -> Ok(make_ev(v, goldens.color_serializer()))
     goldens.TypedValueMyEnum(v) -> Ok(make_ev(v, goldens.my_enum_serializer()))
