@@ -95,10 +95,7 @@ pub fn with_default_header(
   key: String,
   value: String,
 ) -> ServiceClient(send_err) {
-  ServiceClient(
-    ..client,
-    headers: list.append(client.headers, [#(key, value)]),
-  )
+  ServiceClient(..client, headers: list.append(client.headers, [#(key, value)]))
 }
 
 /// Invokes method on the remote service with the given request_value.
