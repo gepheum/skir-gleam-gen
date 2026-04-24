@@ -37,16 +37,16 @@ fn get_user(
   req: User,
   _meta: Nil,
   state: State,
-) -> #(Result(UserProfile, ServiceError), Nil, State) {
+) -> #(Result(UserProfile, ServiceError), Nil, option.Option(State)) {
   case dict.get(state, req.user_id) {
-    Ok(profile) -> #(Ok(profile), Nil, state)
+    Ok(profile) -> #(Ok(profile), Nil, option.Some(state))
     Error(_) -> #(
       Error(ServiceError(
         status: E404xNotFound,
         message: "user not found: " <> int.to_string(req.user_id),
       )),
       Nil,
-      state,
+      option.Some(state),
     )
   }
 }
@@ -55,17 +55,17 @@ fn add_user(
   req: UserProfile,
   _meta: Nil,
   state: State,
-) -> #(Result(User, ServiceError), Nil, State) {
+) -> #(Result(User, ServiceError), Nil, option.Option(State)) {
   let new_state = dict.insert(state, req.user.user_id, req)
-  #(Ok(req.user), Nil, new_state)
+  #(Ok(req.user), Nil, option.Some(new_state))
 }
 
 // ---------------------------------------------------------------------------
 // Service definition
 // ---------------------------------------------------------------------------
 
-fn build_service() -> Service(Nil, State) {
-  service.new()
+fn build_service() -> Service(Nil, State, option.Option(State)) {
+  service.new(empty_message: option.None)
   |> service.add_method(user_out.get_user_method(), get_user)
   |> service.add_method(user_out.add_user_method(), add_user)
   |> service.set_keep_unrecognized_values(True)
@@ -82,15 +82,18 @@ fn build_service() -> Service(Nil, State) {
 
 fn state_loop(
   subject: process.Subject(StateMessage),
-  svc: Service(Nil, State),
+  svc: Service(Nil, State, option.Option(State)),
   state: State,
 ) -> Nil {
   case process.receive_forever(subject) {
     HandleRpc(reply, input) -> {
-      let #(raw, _meta, new_state) =
+      let #(raw, _meta, message) =
         service.handle_request(svc, input, Nil, state)
       process.send(reply, raw)
-      state_loop(subject, svc, new_state)
+      case message {
+        option.Some(new_state) -> state_loop(subject, svc, new_state)
+        option.None -> state_loop(subject, svc, state)
+      }
     }
   }
 }
