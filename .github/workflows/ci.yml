@@ -1,0 +1,30 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x]
+        gleam-version: ["1"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Set up Gleam ${{ matrix.gleam-version }}
+        uses: erlef/setup-beam@v1
+        with:
+          gleam-version: ${{ matrix.gleam-version }}
+          otp-version: "27"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run test
+      - name: Build Gleam docs
+        run: cd e2e-test && gleam docs build
