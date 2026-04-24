@@ -11,9 +11,6 @@ import internal/method.{type Method}
 import serializer
 import type_descriptor
 
-// Studio JS CDN URL — override with set_studio_app_js_url if needed.
-const default_studio_url = "https://cdn.jsdelivr.net/npm/skir-studio/dist/skir-studio-standalone.js"
-
 // =============================================================================
 // ServiceError
 // =============================================================================
@@ -65,7 +62,12 @@ pub type HttpErrorCode {
 }
 
 pub type ServiceError {
+  /// A controlled error with an explicit HTTP status code and message.
+  /// Use this to signal expected failures (e.g. not found, permission denied).
   ServiceError(status: HttpErrorCode, message: String)
+  /// An unexpected internal error. The message is only forwarded to the client
+  /// if can_send_unknown_error_message is enabled on the service.
+  UnknownError(message: String)
 }
 
 // =============================================================================
@@ -166,7 +168,7 @@ fn make_erased_method(
 pub opaque type Service(meta, state) {
   Service(
     keep_unrecognized: Bool,
-    can_send_unknown_error_message: Bool,
+    can_send_unknown_error_message: fn(meta) -> Bool,
     error_logger: fn(String) -> Nil,
     studio_url: String,
     by_number: Dict(Int, ErasedMethod(meta, state)),
@@ -181,7 +183,7 @@ pub opaque type Service(meta, state) {
 pub fn new() -> Service(meta, state) {
   Service(
     keep_unrecognized: False,
-    can_send_unknown_error_message: False,
+    can_send_unknown_error_message: fn(_meta) { False },
     error_logger: log_to_stderr,
     studio_url: default_studio_url,
     by_number: dict.new(),
@@ -211,7 +213,7 @@ pub fn set_keep_unrecognized_values(
 
 pub fn set_can_send_unknown_error_message(
   service: Service(meta, state),
-  can_send: Bool,
+  can_send: fn(meta) -> Bool,
 ) -> Service(meta, state) {
   Service(..service, can_send_unknown_error_message: can_send)
 }
@@ -367,6 +369,15 @@ fn invoke_entry(
         status_code: error_status_to_http_code(status),
         content_type: "text/plain",
         data: msg,
+      )
+    Error(UnknownError(message: msg)) ->
+      RawResponse(
+        status_code: 500,
+        content_type: "text/plain",
+        data: case service.can_send_unknown_error_message(meta) {
+          True -> "server error: " <> msg
+          False -> "server error"
+        },
       )
   }
   #(raw, new_meta, new_state)
@@ -566,3 +577,6 @@ fn error_status_to_http_code(status: HttpErrorCode) -> Int {
 fn log_to_stderr(_message: String) -> Nil {
   Nil
 }
+
+// Studio JS CDN URL — override with set_studio_app_js_url if needed.
+const default_studio_url = "https://cdn.jsdelivr.net/npm/skir-studio/dist/skir-studio-standalone.js"
