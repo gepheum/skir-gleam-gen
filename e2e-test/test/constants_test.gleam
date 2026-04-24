@@ -1,7 +1,7 @@
 import gleeunit/should
+import skir_client/timestamp
 import skirout/constants
 import skirout/enums
-import timestamp
 
 // =============================================================================
 // b_const

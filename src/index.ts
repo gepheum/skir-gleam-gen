@@ -1,11 +1,3 @@
-// TODO: Service: add input_state, output_state
-// TODO: in the generated code, ask AI if some things are not optimal
-// TODO: look at public symbols
-// TODO: review everything
-// TODO: look at generated comments
-// Zig: look at the ?list endpoint
-// TODO: add comments to the library, in particular around Service
-
 import {
   type CodeGenerator,
   type Constant,
@@ -230,16 +222,15 @@ function computeModuleNames(records: readonly RecordLocation[]): {
 const CLIENT_MODULES: ReadonlyArray<readonly [string, string]> = [
   ["gleam/option", "option_"],
   ["gleam/dynamic/decode", "decode_"],
-  ["timestamp", "timestamp_"],
-  ["recursive", "recursive_"],
-  ["internal/method", "method_"],
-  ["serializer", "serializer_"],
-  ["serializers", "serializers_"],
-  ["type_descriptor", "type_descriptor_"],
-  ["internal/struct_serializer", "struct_serializer_"],
+  ["skir_client/timestamp", "timestamp_"],
+  ["skir_client/recursive", "recursive_"],
+  ["skir_client/method", "method_"],
+  ["skir_client", "skir_client_"],
+  ["skir_client/type_descriptor", "type_descriptor_"],
+  ["skir_client/internal/struct_serializer", "struct_serializer_"],
   ["gleam/list", "list_"],
   ["gleam/result", "result_"],
-  ["internal/enum_serializer", "enum_serializer_"],
+  ["skir_client/internal/enum_serializer", "enum_serializer_"],
 ] as const;
 
 class GleamSourceFileGenerator {
@@ -479,7 +470,7 @@ class GleamSourceFileGenerator {
         if (Number.isNaN(ms)) {
           throw new Error(`Cannot parse timestamp: ${tokenText}`);
         }
-        this.neededModules.add("timestamp");
+        this.neededModules.add("skir_client/timestamp");
         return `timestamp_.Timestamp(unix_millis: ${ms})`;
       }
       default:
@@ -491,7 +482,7 @@ class GleamSourceFileGenerator {
     if (value.kind !== "object") throw new Error("Expected object for struct");
     const typeName = this.typeNameFor(record);
     const prefix = this.qualifiedPrefixFor(record);
-    this.neededModules.add("internal/struct_serializer");
+    this.neededModules.add("skir_client/internal/struct_serializer");
     // Sort fields alphabetically to match the generated type definition.
     const fields = [...record.record.fields].sort((a, b) =>
       a.name.text.localeCompare(b.name.text),
@@ -502,7 +493,7 @@ class GleamSourceFileGenerator {
       const fieldName = toFieldName(field.name.text);
       const entry = value.entries[field.name.text];
       if (field.isRecursive === "hard") {
-        this.neededModules.add("internal/recursive");
+        this.neededModules.add("skir_client/recursive");
         if (entry) {
           const innerExpr = this.valueToGleamExpr(entry.value, field.type);
           args.push(`${fieldName}: recursive_.Some(\n${innerExpr}\n)`);
@@ -572,7 +563,7 @@ class GleamSourceFileGenerator {
   }
 
   private writeMethod(method: Method<false>): void {
-    this.neededModules.add("internal/method");
+    this.neededModules.add("skir_client/method");
     const { typeSpeller } = this;
     const gleamName =
       convertCase(method.name.text, "lower_underscore") + "_method";
@@ -601,8 +592,8 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForStruct(struct: RecordLocation): void {
-    this.neededModules.add("serializer");
-    this.neededModules.add("internal/struct_serializer");
+    this.neededModules.add("skir_client");
+    this.neededModules.add("skir_client/internal/struct_serializer");
     this.neededModules.add("gleam/list");
     this.neededModules.add("gleam/result");
     const { typeSpeller } = this;
@@ -680,7 +671,7 @@ class GleamSourceFileGenerator {
     const structDefaultExpr = `${fnPrefix}default`;
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> serializer_.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
     );
     // Hoist non-recursive serializer construction so it is created once and
     // reused in ordered_fields, decode_dense_json, and decode_binary.
@@ -818,8 +809,8 @@ class GleamSourceFileGenerator {
   }
 
   private writeTypesForEnum(record: RecordLocation): void {
-    this.neededModules.add("serializer");
-    this.neededModules.add("internal/enum_serializer");
+    this.neededModules.add("skir_client");
+    this.neededModules.add("skir_client/internal/enum_serializer");
     const { typeSpeller } = this;
     const typeName = this.typeNameFor(record);
     const fnPrefix = this.fnPrefixFor(record);
@@ -865,7 +856,7 @@ class GleamSourceFileGenerator {
     // Serializer.
     this.push(`/// Returns the serializer for \`${typeName}\` values.\n`);
     this.push(
-      `pub fn ${fnPrefix}serializer() -> serializer_.Serializer(${typeName}) {\n`,
+      `pub fn ${fnPrefix}serializer() -> skir_client_.Serializer(${typeName}) {\n`,
     );
     this.push(`enum_serializer_.new_serializer(\n`);
     this.push(`name: ${JSON.stringify(record.record.name.text)},\n`);

@@ -51,7 +51,7 @@ export class TypeSpeller {
           case "string":
             return "String";
           case "timestamp":
-            this.neededModules.add("timestamp");
+            this.neededModules.add("skir_client/timestamp");
             return "timestamp_.Timestamp";
           case "bytes":
             return "BitArray";
@@ -66,28 +66,28 @@ export class TypeSpeller {
    * Returns the Gleam serializer expression for the given type.
    */
   getSerializerExpression(type: ResolvedType): string {
-    this.neededModules.add("serializers");
+    this.neededModules.add("skir_client");
     switch (type.kind) {
       case "primitive": {
         switch (type.primitive) {
           case "bool":
-            return "serializers_.bool_serializer()";
+            return "skir_client_.bool_serializer()";
           case "int32":
-            return "serializers_.int32_serializer()";
+            return "skir_client_.int32_serializer()";
           case "int64":
-            return "serializers_.int64_serializer()";
+            return "skir_client_.int64_serializer()";
           case "hash64":
-            return "serializers_.hash64_serializer()";
+            return "skir_client_.hash64_serializer()";
           case "float32":
-            return "serializers_.float32_serializer()";
+            return "skir_client_.float32_serializer()";
           case "float64":
-            return "serializers_.float64_serializer()";
+            return "skir_client_.float64_serializer()";
           case "timestamp":
-            return "serializers_.timestamp_serializer()";
+            return "skir_client_.timestamp_serializer()";
           case "string":
-            return "serializers_.string_serializer()";
+            return "skir_client_.string_serializer()";
           case "bytes":
-            return "serializers_.bytes_serializer()";
+            return "skir_client_.bytes_serializer()";
         }
         const _: never = type.primitive;
         throw TypeError();
@@ -97,19 +97,19 @@ export class TypeSpeller {
         if (type.key) {
           const keyExtractor = type.key.path.map((p) => p.name.text).join(".");
           return (
-            "serializers_.keyed_list_serializer(\n" +
+            "skir_client_.keyed_list_serializer(\n" +
             itemSerializer +
             ",\n" +
             JSON.stringify(keyExtractor) +
             ",\n)"
           );
         } else {
-          return "serializers_.list_serializer(\n" + itemSerializer + ",\n)";
+          return "skir_client_.list_serializer(\n" + itemSerializer + ",\n)";
         }
       }
       case "optional":
         return (
-          "serializers_.optional_serializer(\n" +
+          "skir_client_.optional_serializer(\n" +
           this.getSerializerExpression(type.other) +
           ",\n)"
         );
@@ -126,7 +126,7 @@ export class TypeSpeller {
     if (field.isRecursive !== "hard") {
       return this.getGleamType(type);
     }
-    this.neededModules.add("recursive");
+    this.neededModules.add("skir_client/recursive");
     return `recursive_.Recursive(${this.getGleamType(type)})`;
   }
 
@@ -139,9 +139,9 @@ export class TypeSpeller {
     if (field.isRecursive !== "hard") {
       return this.getSerializerExpression(type);
     }
-    this.neededModules.add("serializers");
+    this.neededModules.add("skir_client");
     return (
-      "serializers_.recursive_serializer(\n" +
+      "skir_client_.recursive_serializer(\n" +
       this.getSerializerExpression(type) +
       ",\n)"
     );
@@ -155,7 +155,7 @@ export class TypeSpeller {
     if (field.isRecursive !== "hard") {
       return this.getDefaultExpression(type);
     }
-    this.neededModules.add("recursive");
+    this.neededModules.add("skir_client/recursive");
     return "recursive_.Default";
   }
 
@@ -192,7 +192,7 @@ export class TypeSpeller {
           case "string":
             return '""';
           case "timestamp":
-            this.neededModules.add("timestamp");
+            this.neededModules.add("skir_client/timestamp");
             return "timestamp_.Timestamp(unix_millis: 0)";
           case "bytes":
             return "<<>>";
@@ -208,7 +208,7 @@ export class TypeSpeller {
    * Used to populate the `type_sig` field of FieldSpec for recursive fields.
    */
   getTypeSignatureExpression(type: ResolvedType): string {
-    this.neededModules.add("type_descriptor");
+    this.neededModules.add("skir_client/type_descriptor");
     switch (type.kind) {
       case "primitive": {
         const prim = (
