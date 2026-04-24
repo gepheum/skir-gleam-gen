@@ -75,6 +75,8 @@ pub type ServiceError {
 // =============================================================================
 
 /// The return value of handle_request.
+///
+/// Write these fields directly to your HTTP framework response.
 pub type RawResponse {
   RawResponse(status_code: Int, content_type: String, data: String)
 }
@@ -83,6 +85,11 @@ pub type RawResponse {
 // ErrorInfo
 // =============================================================================
 
+/// Context passed to service hooks when a method returns an error.
+///
+/// `request_meta` is the per-request metadata you passed into
+/// `handle_request` (for example: headers, auth context, request id).
+/// `state` is the current application state for that invocation.
 pub type ServiceErrorInfo(req_meta, state) {
   ErrorInfo(
     error: ServiceError,
@@ -185,6 +192,21 @@ fn make_erased_method(
 // Service
 // =============================================================================
 
+/// Dispatches RPC requests to registered methods.
+///
+/// Type parameters:
+/// - `req_meta`: per-request metadata supplied by your HTTP handler.
+/// - `state`: application state
+/// - `message`: application state update, returned by `handle_request`.
+///
+/// Example setup:
+/// ```gleam
+/// service.new(empty_message: option.None)
+/// |> service.add_method(user_out.get_user_method(), get_user)
+/// |> service.add_method(user_out.add_user_method(), add_user)
+/// |> service.set_keep_unrecognized_values(True)
+/// |> service.set_can_send_unknown_error_message(fn(_info) { True })
+/// ```
 pub opaque type Service(req_meta, state, message) {
   Service(
     keep_unrecognized: Bool,
@@ -202,6 +224,16 @@ pub opaque type Service(req_meta, state, message) {
 // Service setup
 // =============================================================================
 
+/// Creates a new service.
+///
+/// Default behavior:
+/// - unrecognized request values are dropped.
+/// - unknown error messages are not exposed to clients.
+/// - errors are ignored by the default logger.
+///
+/// `empty_message` is returned by `handle_request` when no method-produced
+/// message is available (for example `"list"`, `"studio"`, malformed input,
+/// or unknown method).
 pub fn new(
   empty_message empty_message: message,
 ) -> Service(req_meta, state, message) {
@@ -216,6 +248,13 @@ pub fn new(
   )
 }
 
+/// Registers one method implementation.
+///
+/// Your `handler` receives the deserialized request, request metadata, and
+/// application state, and returns:
+/// - `Ok(response)` for success.
+/// - `Error(ServiceError(...))` for controlled HTTP errors.
+/// - message for updating the application state.
 pub fn add_method(
   service: Service(req_meta, state, message),
   method: Method(req, resp),
@@ -230,6 +269,9 @@ pub fn add_method(
   )
 }
 
+/// Controls whether unknown request fields are preserved while decoding.
+///
+/// Keep this disabled unless your use case requires it.
 pub fn set_keep_unrecognized_values(
   service: Service(req_meta, state, message),
   keep: Bool,
@@ -237,6 +279,10 @@ pub fn set_keep_unrecognized_values(
   Service(..service, keep_unrecognized: keep)
 }
 
+/// Decides whether unknown internal error messages may be sent to clients.
+///
+/// The safe default is `False`. Expose messages only when you are sure they do
+/// not leak sensitive details.
 pub fn set_can_send_unknown_error_message(
   service: Service(req_meta, state, message),
   can_send: fn(ServiceErrorInfo(req_meta, state)) -> Bool,
@@ -244,6 +290,9 @@ pub fn set_can_send_unknown_error_message(
   Service(..service, can_send_unknown_error_message: can_send)
 }
 
+/// Sets a callback invoked whenever a method returns an error.
+///
+/// Use this for monitoring and debugging.
 pub fn set_error_logger(
   service: Service(req_meta, state, message),
   logger: fn(ServiceErrorInfo(req_meta, state)) -> Nil,
@@ -251,6 +300,7 @@ pub fn set_error_logger(
   Service(..service, error_logger: logger)
 }
 
+/// Sets the JavaScript URL used by the built-in `"studio"` endpoint.
 pub fn set_studio_app_js_url(
   service: Service(req_meta, state, message),
   url: String,
@@ -262,16 +312,40 @@ pub fn set_studio_app_js_url(
 // handle_request
 // =============================================================================
 
+/// Handles one incoming request body and returns `(raw_response, message)`.
+///
+/// Accepted built-ins:
+/// - `""` or `"studio"`: serves the studio HTML.
+/// - `"list"`: returns service method metadata.
+///
+/// In a typical HTTP server:
+/// - for POST requests, pass the raw body text.
+/// - for GET requests, pass the decoded query input (as shown in
+///   `start_service.gleam`).
+///
+/// For normal RPC calls, this dispatches to the registered method and returns
+/// that method's updated metadata/message.
+///
+/// Example (adapted from `start_service.gleam`):
+/// ```gleam
+/// let #(raw, message) =
+///   service.handle_request(svc, input, Nil, state)
+/// process.send(reply, raw)
+/// case message {
+///   option.Some(new_state) -> state_loop(subject, svc, new_state)
+///   option.None -> state_loop(subject, svc, state)
+/// }
+/// ```
 pub fn handle_request(
   service: Service(req_meta, state, message),
   body: String,
   req_meta: req_meta,
   state: state,
-) -> #(RawResponse, req_meta, message) {
+) -> #(RawResponse, message) {
   let trimmed = string.trim(body)
   case trimmed {
-    "" | "studio" -> #(serve_studio(service), req_meta, service.empty_message)
-    "list" -> #(serve_list(service), req_meta, service.empty_message)
+    "" | "studio" -> #(serve_studio(service), service.empty_message)
+    "list" -> #(serve_list(service), service.empty_message)
     _ -> {
       case string.first(trimmed) {
         Ok("{") -> handle_json_request(service, trimmed, req_meta, state)
@@ -290,11 +364,10 @@ fn handle_json_request(
   body: String,
   req_meta: req_meta,
   state: state,
-) -> #(RawResponse, req_meta, message) {
+) -> #(RawResponse, message) {
   case parse_json_format(body) {
     Error(msg) -> #(
       RawResponse(status_code: 400, content_type: "text/plain", data: msg),
-      req_meta,
       service.empty_message,
     )
     Ok(#(method_id, request_dynamic)) ->
@@ -305,7 +378,6 @@ fn handle_json_request(
             content_type: "text/plain",
             data: "method not found",
           ),
-          req_meta,
           service.empty_message,
         )
         Ok(entry) ->
@@ -326,11 +398,10 @@ fn handle_colon_request(
   body: String,
   req_meta: req_meta,
   state: state,
-) -> #(RawResponse, req_meta, message) {
+) -> #(RawResponse, message) {
   case parse_colon_format(body) {
     Error(msg) -> #(
       RawResponse(status_code: 400, content_type: "text/plain", data: msg),
-      req_meta,
       service.empty_message,
     )
     Ok(#(method_id, readable, request_dynamic)) ->
@@ -341,7 +412,6 @@ fn handle_colon_request(
             content_type: "text/plain",
             data: "method not found",
           ),
-          req_meta,
           service.empty_message,
         )
         Ok(entry) ->
@@ -374,8 +444,8 @@ fn invoke_entry(
   readable readable: Bool,
   req_meta req_meta: req_meta,
   state state: state,
-) -> #(RawResponse, req_meta, message) {
-  let #(result, new_req_meta, new_state) =
+) -> #(RawResponse, message) {
+  let #(result, _new_req_meta, new_state) =
     entry.invoke(
       request_dynamic,
       service.keep_unrecognized,
@@ -414,7 +484,7 @@ fn invoke_entry(
         },
       )
   }
-  #(raw, new_req_meta, new_state)
+  #(raw, new_state)
 }
 
 // =============================================================================

@@ -19,6 +19,9 @@ import serializer
 pub type RpcError {
   RpcError(
     /// HTTP status code from the server, or 0 for network-level failures.
+    ///
+    /// `0` usually means the request could not be completed (DNS, refused
+    /// connection, timeout, etc.), rather than an application error response.
     status_code: Int,
     /// Human-readable description of the error.
     message: String,
@@ -35,11 +38,16 @@ pub type RpcError {
 /// Its signature matches httpc.send from the gleam_httpc package, so you can
 /// pass httpc.send directly (or any compatible function).
 ///
+/// This client is usually used by generated helper functions, but it is also
+/// safe to use directly.
+///
 /// Example:
 ///   import gleam/httpc
 ///   import skir_client/service_client
 ///   let assert Ok(client) =
 ///     service_client.new("http://localhost:8787/myapi", httpc.send)
+///
+/// A common pattern is to create the client once at startup and reuse it.
 pub opaque type ServiceClient(send_err) {
   ServiceClient(
     service_url: String,
@@ -56,6 +64,9 @@ pub opaque type ServiceClient(send_err) {
 ///
 /// Returns an error string if service_url contains a query string or is not
 /// a valid URL.
+///
+/// Tip: pass the base endpoint URL (for example
+/// `"http://localhost:8787/myapi"`) without query parameters.
 pub fn new(
   service_url: String,
   send_fn: fn(request.Request(String)) -> Result(Response(String), send_err),
@@ -79,6 +90,8 @@ pub fn new(
 /// Adds a default HTTP header sent with every invocation.
 ///
 /// May be chained: client |> with_default_header("Authorization", "Bearer ...")
+///
+/// Use `extra_headers` in `invoke_remote` for call-specific headers.
 pub fn with_default_header(
   client: ServiceClient(send_err),
   key: String,
@@ -95,24 +108,31 @@ pub fn with_default_header(
 /// extra_headers is a list of #(name, value) pairs that supplement (or
 /// override) the default headers for this specific call only.
 ///
-/// The request is serialized as dense JSON.  The response is deserialized
-/// keeping any unrecognized values (the server may have a newer schema).
+/// This function returns:
+/// - `Ok(response)` when the remote method succeeds.
+/// - `Error(RpcError(...))` for transport failures, non-2xx responses, or
+///   response-decoding failures.
+///
+/// Example:
+///   let result =
+///     service_client.invoke_remote(
+///       client,
+///       user_out.get_user_method(),
+///       request,
+///       [#("x-request-id", "abc-123")],
+///     )
 pub fn invoke_remote(
   client: ServiceClient(send_err),
   method: Method(req, resp),
   request_value: req,
   extra_headers: List(#(String, String)),
 ) -> Result(resp, RpcError) {
-  // Serialize the request as dense JSON.
   let request_json =
     serializer.to_dense_json_code(method.request_serializer, request_value)
 
-  // Wire body: "MethodName:number::requestJson"
-  // The empty third field signals that the server may reply in dense JSON.
   let wire_body =
     method.name <> ":" <> int.to_string(method.number) <> "::" <> request_json
 
-  // Build the HTTP request from the pre-parsed URL.
   let p = client.parsed_url
   let scheme = case p.scheme {
     option.Some("https") -> http.Https
@@ -135,7 +155,6 @@ pub fn invoke_remote(
     |> request.set_body(wire_body)
     |> request.prepend_header("content-type", "text/plain; charset=utf-8")
 
-  // Apply default headers, then per-call extra headers.
   let req =
     list.fold(client.default_headers, req, fn(r, pair) {
       request.set_header(r, pair.0, pair.1)
@@ -145,7 +164,6 @@ pub fn invoke_remote(
       request.set_header(r, pair.0, pair.1)
     })
 
-  // Send the request.
   case client.send_fn(req) {
     Error(_) ->
       Error(RpcError(status_code: 0, message: "network error: request failed"))

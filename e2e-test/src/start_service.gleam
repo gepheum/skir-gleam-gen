@@ -87,8 +87,7 @@ fn state_loop(
 ) -> Nil {
   case process.receive_forever(subject) {
     HandleRpc(reply, input) -> {
-      let #(raw, _meta, message) =
-        service.handle_request(svc, input, Nil, state)
+      let #(raw, message) = service.handle_request(svc, input, Nil, state)
       process.send(reply, raw)
       case message {
         option.Some(new_state) -> state_loop(subject, svc, new_state)
