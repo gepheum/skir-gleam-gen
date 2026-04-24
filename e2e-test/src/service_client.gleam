@@ -52,7 +52,7 @@ pub opaque type ServiceClient(send_err) {
   ServiceClient(
     service_url: String,
     parsed_url: uri.Uri,
-    default_headers: List(#(String, String)),
+    headers: List(#(String, String)),
     send_fn: fn(request.Request(String)) -> Result(Response(String), send_err),
   )
 }
@@ -80,18 +80,16 @@ pub fn new(
           Ok(ServiceClient(
             service_url: service_url,
             parsed_url: parsed,
-            default_headers: [],
+            headers: [],
             send_fn: send_fn,
           ))
       }
   }
 }
 
-/// Adds a default HTTP header sent with every invocation.
+/// Adds an HTTP header sent with every invocation.
 ///
 /// May be chained: client |> with_default_header("Authorization", "Bearer ...")
-///
-/// Use `extra_headers` in `invoke_remote` for call-specific headers.
 pub fn with_default_header(
   client: ServiceClient(send_err),
   key: String,
@@ -99,14 +97,11 @@ pub fn with_default_header(
 ) -> ServiceClient(send_err) {
   ServiceClient(
     ..client,
-    default_headers: list.append(client.default_headers, [#(key, value)]),
+    headers: list.append(client.headers, [#(key, value)]),
   )
 }
 
 /// Invokes method on the remote service with the given request_value.
-///
-/// extra_headers is a list of #(name, value) pairs that supplement (or
-/// override) the default headers for this specific call only.
 ///
 /// This function returns:
 /// - `Ok(response)` when the remote method succeeds.
@@ -119,13 +114,11 @@ pub fn with_default_header(
 ///       client,
 ///       user_out.get_user_method(),
 ///       request,
-///       [#("x-request-id", "abc-123")],
 ///     )
 pub fn invoke_remote(
   client: ServiceClient(send_err),
   method: Method(req, resp),
   request_value: req,
-  extra_headers: List(#(String, String)),
 ) -> Result(resp, RpcError) {
   let request_json =
     serializer.to_dense_json_code(method.request_serializer, request_value)
@@ -156,11 +149,7 @@ pub fn invoke_remote(
     |> request.prepend_header("content-type", "text/plain; charset=utf-8")
 
   let req =
-    list.fold(client.default_headers, req, fn(r, pair) {
-      request.set_header(r, pair.0, pair.1)
-    })
-  let req =
-    list.fold(extra_headers, req, fn(r, pair) {
+    list.fold(client.headers, req, fn(r, pair) {
       request.set_header(r, pair.0, pair.1)
     })
 

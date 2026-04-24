@@ -6,10 +6,6 @@ gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_time = ">= 1.8.0 and < 2.0.0"
 gleam_http = ">= 4.0.0 and < 5.0.0"
-mist = ">= 5.0.0 and < 7.0.0"
-gleam_httpc = ">= 5.0.0 and < 7.0.0"
-gleam_erlang = ">= 1.0.0 and < 2.0.0"
-gleam_otp = ">= 0.10.0 and < 2.0.0"
 
 [dev_dependencies]
 gleeunit = ">= 1.9.0 and < 2.0.0"
