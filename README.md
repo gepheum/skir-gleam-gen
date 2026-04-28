@@ -60,14 +60,15 @@ let john =
 io.println(john.name)
 // John Doe
 
-// `user_default` holds a User with every field set to its default value.
+// `user_default` holds the default value with every field at its zero value.
 io.println(user.user_default.name)
 // (empty string)
 io.println(int.to_string(user.user_default.user_id))
 // 0
 
-// Gleam's record update syntax lets you specify just a few fields and keep
-// the rest from an existing instance.
+// Combining the _default constant with Gleam's record update syntax allows
+// you to instantiate a struct by only specifying a subset of its fields;
+// the remaining fields are set to their default values.
 let jane = user.User(..user.user_default, user_id: 43, name: "Jane Doe")
 
 io.println(jane.quote)
@@ -79,8 +80,8 @@ io.println(int.to_string(list.length(jane.pets)))
 #### Creating modified copies
 
 ```gleam
-// Gleam records are immutable. Use record update syntax to create a modified
-// copy without changing the original.
+// Gleam records are immutable.
+// To make a modified copy, use record update syntax on the original.
 let evil_john =
   user.User(
     ..john,
@@ -92,8 +93,6 @@ io.println(evil_john.name)
 // Evil John
 io.println(int.to_string(evil_john.user_id))
 // 42 (copied from john)
-io.println(john.name)
-// John Doe (john is unchanged)
 ```
 
 ### Enum types
@@ -113,16 +112,15 @@ Skir generates a Gleam custom type for every enum in the .skir file.
 
 ```gleam
 let _statuses = [
-  // Unknown is the default and is present in all Skir enums even if it is not
-  // declared in the .skir file.
+  // Unknown is the default and is present in all Skir enums.
   user.subscription_status_unknown,
   user.SubscriptionStatusFree,
   user.SubscriptionStatusPremium,
   // Wrapper variants carry an inner struct.
   user.SubscriptionStatusTrialX(
-    user.subscription_status__trial_new(
-      timestamp.Timestamp(unix_millis: 1_743_592_409_000),
-    ),
+    user.subscription_status__trial_new(timestamp.Timestamp(
+      unix_millis: 1_743_592_409_000,
+    )),
   ),
 ]
 ```
@@ -145,9 +143,9 @@ io.println(get_info_text(john.subscription_status))
 
 let trial_status =
   user.SubscriptionStatusTrialX(
-    user.subscription_status__trial_new(
-      timestamp.Timestamp(unix_millis: 1_743_592_409_000),
-    ),
+    user.subscription_status__trial_new(timestamp.Timestamp(
+      unix_millis: 1_743_592_409_000,
+    )),
   )
 io.println(get_info_text(trial_status))
 // On trial since 1743592409000
@@ -160,55 +158,32 @@ The serializer for a type is returned by calling the generated `*_serializer()` 
 ```gleam
 let serializer = user.user_serializer()
 
-// Serialize 'john' to dense JSON (field-number-based; the default mode).
+// Serialize to dense JSON (field-number-based; the default mode).
 // Use this when you plan to deserialize the value later. Because field
 // names are not included, renaming a field remains backward-compatible.
 let john_dense_json = skir_client.to_dense_json_code(serializer, john)
 io.println(john_dense_json)
 // [42,"John Doe",...]
 
-// Serialize 'john' to readable (name-based, indented) JSON.
+// Serialize to readable (name-based, indented) JSON.
 // Use this mainly for debugging.
 io.println(skir_client.to_readable_json_code(serializer, john))
 // {
 //   "user_id": 42,
 //   "name": "John Doe",
 //   "quote": "Coffee is just a socially acceptable form of rage.",
-//   "pets": [
-//     {
-//       "name": "Dumbo",
-//       "height_in_meters": 1.0,
-//       "picture": "🐘"
-//     }
-//   ],
+//   "pets": [ ... ],
 //   "subscription_status": "FREE"
 // }
 
-// The dense JSON flavor is the flavor you should pick if you intend to
-// deserialize the value in the future. Skir allows fields to be renamed,
-// and because field names are not part of the dense JSON, renaming a field
-// does not prevent you from deserializing the value.
-// You should pick the readable flavor mostly for debugging purposes.
-
-// Serialize 'john' to binary format.
-let john_bytes = skir_client.to_bytes(serializer, john)
-
-// The binary format is not human readable, but it is slightly more compact
-// than JSON, and serialization/deserialization can be a bit faster in
-// languages like C++. Only use it when this small performance gain is
-// likely to matter, which should be rare.
-```
-
-### Deserialization
-
-```gleam
-// Use from_json_code() and from_bytes() to deserialize.
-// Both accept dense and readable JSON.
-
+// Deserialize from JSON (both dense and readable formats are accepted).
 let assert Ok(reserialized_john) =
   skir_client.from_json_code(serializer, john_dense_json)
 let assert True = reserialized_john == john
 
+// Serialize to binary format (more compact than JSON; useful when
+// performance matters, though the difference is rarely significant).
+let john_bytes = skir_client.to_bytes(serializer, john)
 let assert Ok(from_bytes) = skir_client.from_bytes(serializer, john_bytes)
 let assert True = from_bytes == john
 ```
@@ -226,16 +201,25 @@ io.println(skir_client.to_dense_json_code(
 ))
 // "9223372036854775807"
 io.println(skir_client.to_dense_json_code(
+  skir_client.float32_serializer(),
+  1.5,
+))
+// 1.5
+io.println(skir_client.to_dense_json_code(
+  skir_client.float64_serializer(),
+  1.5,
+))
+// 1.5
+io.println(skir_client.to_dense_json_code(
+  skir_client.string_serializer(),
+  "Foo",
+))
+// "Foo"
+io.println(skir_client.to_dense_json_code(
   skir_client.timestamp_serializer(),
   timestamp.Timestamp(unix_millis: 1_743_682_787_000),
 ))
 // 1743682787000
-io.println(skir_client.to_dense_json_code(skir_client.float32_serializer(), 1.5))
-// 1.5
-io.println(skir_client.to_dense_json_code(skir_client.float64_serializer(), 1.5))
-// 1.5
-io.println(skir_client.to_dense_json_code(skir_client.string_serializer(), "Foo"))
-// "Foo"
 ```
 
 ### Composite serializers
@@ -255,10 +239,12 @@ io.println(skir_client.to_dense_json_code(
 // null
 
 // List serializer:
-io.println(skir_client.to_dense_json_code(
-  skir_client.list_serializer(skir_client.bool_serializer()),
-  [True, False],
-))
+io.println(
+  skir_client.to_dense_json_code(
+    skir_client.list_serializer(skir_client.bool_serializer()),
+    [True, False],
+  ),
+)
 // [1,0]
 ```
 
@@ -314,35 +300,18 @@ import gleam/list
 import skir_client
 import skir_client/type_descriptor
 
-let user_type_descriptor = skir_client.type_descriptor(user.user_serializer())
+let td = skir_client.type_descriptor(user.user_serializer())
 
 // Print the full type descriptor as JSON.
-io.println(type_descriptor.type_descriptor_to_json(user_type_descriptor))
+io.println(type_descriptor.type_descriptor_to_json(td))
 // {
-//   "type": {
-//     "kind": "record",
-//     "value": "user.skir:User"
-//   },
-//   "records": [
-//     {
-//       "kind": "struct",
-//       "id": "user.skir:User",
-//       "fields": [
-//         {
-//           "name": "user_id",
-//           "number": 0,
-//           "type": { "kind": "primitive", "value": "int32" }
-//         },
-//         ...
-//       ]
-//     },
-//     ...
-//   ]
+//   "type": { "kind": "record", "value": "user.skir:User" },
+//   "records": [ ... ]
 // }
 
 // Pattern match on the records map to inspect the User struct's fields.
 let assert Ok(type_descriptor.StructRecord(user_struct)) =
-  dict.get(user_type_descriptor.records, "user.skir:User")
+  dict.get(td.records, "user.skir:User")
 
 let field_names = list.map(user_struct.fields, fn(f) { f.name })
 io.println(string.join(field_names, ", "))
@@ -352,9 +321,8 @@ io.println(int.to_string(list.length(user_struct.fields)))
 // 5
 
 // A TypeDescriptor can be serialized to JSON and parsed back.
-let type_descriptor_json =
-  type_descriptor.type_descriptor_to_json(user_type_descriptor)
-let assert Ok(reparsed_type_descriptor) =
+let type_descriptor_json = type_descriptor.type_descriptor_to_json(td)
+let assert Ok(reparsed_td) =
   type_descriptor.type_descriptor_from_json(type_descriptor_json)
-let assert True = reparsed_type_descriptor == user_type_descriptor
+let assert True = reparsed_td == td
 ```
