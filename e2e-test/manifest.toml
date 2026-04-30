@@ -7,7 +7,7 @@ packages = [
   { name = "gleam_stdlib", version = "1.0.0", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "960090C2FB391784BB34267B099DC9315CC1B1F6013E7415BC763CEF1905D7D3" },
   { name = "gleam_time", version = "1.8.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_time", source = "hex", outer_checksum = "533D8723774D61AD4998324F5DD1DABDCDBFABAFB9E87CB5D03C6955448FC97D" },
   { name = "gleeunit", version = "1.10.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "254B697FE72EEAD7BF82E941723918E421317813AC49923EE76A18C788C61E72" },
-  { name = "skir_client", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_http", "gleam_json", "gleam_stdlib", "gleam_time"], otp_app = "skir_client", source = "hex", outer_checksum = "C9C7743B1F82B91C5354414999BBB4F063D6321B79E5E5893705D5D757FB0108" },
+  { name = "skir_client", version = "1.0.1", build_tools = ["gleam"], requirements = ["gleam_http", "gleam_json", "gleam_stdlib", "gleam_time"], otp_app = "skir_client", source = "hex", outer_checksum = "8DA2180470ACB0770550197D84692237EFB7B614F57EC3ADDC43EBB8BB5189DD" },
 ]
 
 [requirements]
@@ -16,4 +16,4 @@ gleam_json = { version = ">= 3.1.0 and < 4.0.0" }
 gleam_stdlib = { version = ">= 1.0.0 and < 2.0.0" }
 gleam_time = { version = ">= 1.8.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.9.0 and < 2.0.0" }
-skir_client = { version = ">= 1.0.0 and < 2.0.0" }
+skir_client = { version = ">= 1.0.1 and < 2.0.0" }

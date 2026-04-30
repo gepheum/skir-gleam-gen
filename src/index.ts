@@ -876,9 +876,7 @@ class GleamSourceFileGenerator {
       if (!variant.type) {
         // Constant variant.
         this.push(`enum_serializer_.constant_variant(\n`);
-        this.push(
-          `name: ${JSON.stringify(convertCase(variant.name.text, "UPPER_UNDERSCORE"))},\n`,
-        );
+        this.push(`name: ${JSON.stringify(variant.name.text)},\n`);
         this.push(`number: ${variant.number},\n`);
         this.push(`doc: ${JSON.stringify(docToCommentText(variant.doc))},\n`);
         this.push(`instance: ${ctorName},\n`);
