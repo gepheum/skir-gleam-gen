@@ -100,9 +100,9 @@ io.println(int.to_string(evil_john.user_id))
 The definition of the `SubscriptionStatus` enum in the .skir file is:
 ```rust
 enum SubscriptionStatus {
-  FREE;
+  free;
   trial: Trial;
-  PREMIUM;
+  premium;
 }
 ```
 
