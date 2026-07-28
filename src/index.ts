@@ -654,7 +654,7 @@ class GleamSourceFileGenerator {
     for (const field of fields) {
       const fieldName = toFieldName(field.name.text);
       const gleamType = typeSpeller.getFieldGleamType(field);
-      this.push(`${fieldName}: ${gleamType},\n`);
+      this.push(`${fieldName} ${fieldName}: ${gleamType},\n`);
     }
     this.push(`) -> ${typeName} {\n`);
     this.push(`${typeName}(\n`);
